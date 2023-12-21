@@ -1,3 +1,25 @@
+use std::num;
+use core::fmt;
+
+pub trait Number: Sized {
+    fn parse(src: &str) -> Result<Self, num::ParseIntError>;
+}
+
+impl Number for u64 {
+    fn parse(src: &str) -> Result<Self, num::ParseIntError> {
+        u64::from_str_radix(src, 10)
+    }
+}
+
+pub fn warn_err<T, E:fmt::Display>(r: Result<T,E>) -> Option<T> {
+    match r {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("warning: {}", e);
+            None
+        }
+    }
+}
 
 pub struct Matcher<'a, T> {
     tail: &'a str,
@@ -5,31 +27,83 @@ pub struct Matcher<'a, T> {
 }
 
 impl <'a, T> Matcher<'a,T> {
-    fn derive<R>(self, v:Option<R>) -> Matcher<'a, R> {
-        Matcher { tail: self.tail, val: v }
-    }
-
     fn pop<R>(&self, len: usize, val: R) -> Matcher<'a, R> {
         Matcher { tail: &self.tail[len..], val: Some(val) }
+    }
+
+    fn map<R,F>(self, f: F) -> Matcher<'a, R>
+            where F: FnOnce(T) -> Option<R> {
+        match self {
+            Matcher { tail, val: None } => Matcher { tail, val: None },
+            Matcher { tail, val: Some(v) } => Matcher { tail, val: (f(v)) }
+        }
+    }
+
+    fn then<R,F>(self, f: F) -> Matcher<'a, R> 
+            where F: FnOnce(T) -> Matcher<'a, R> {
+        match self.val {
+            None => Matcher { tail: self.tail, val: None },
+            Some(v) => f(v) 
+        }
+    }
+
+    fn fail<R>(mut self, offset: usize) -> Matcher<'a, R> {
+        if self.tail.len() >= offset {
+            self.tail = &self.tail[offset..];
+        }
+
+        Matcher { tail: self.tail, val: None }
+    }
+
+    pub fn skip_after<F>(mut self, f:F) -> Self
+            where F: Fn(char) -> bool {
+
+        match Matcher::new(self.tail)
+                      .class(|_,i| !f(i)) {
+            Matcher { tail, val: Some(_) } => {
+                if tail.len() > 0 {
+                    self.tail = &tail[1..]
+                } else {
+                    self.tail = tail
+                }
+            },
+            Matcher { tail, .. } => self.tail = tail
+        }
+
+        self
     }
 
     pub fn result(self) -> Option<T> {
         self.val
     }
+
+    pub fn space(self) -> Matcher<'a, T> {
+        Matcher::new(self.tail)
+               .class(|_,c| c.is_whitespace())
+               .map(|_| self.val)
+    }
+
+    pub fn add_word(self) -> Matcher<'a, (T, &'a str)> {
+        let tail = self.tail;
+        self.then(|base|
+            Matcher::new(tail)
+                  .word()
+                  .map(|v| Some((base, v))))
+    }
 }
 
 impl <'a> Matcher<'a, ()> {
     pub fn new(tail: &'a str) -> Self {
-        Matcher { tail, val: None }
+        Matcher { tail, val: Some(()) }
     }
 
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, ()> {
         if self.tail.len() < refstr.len() {
-            self.derive(None)
+            self.fail(refstr.len())
         } else if &self.tail[0..refstr.len()] == refstr {
             self.pop(refstr.len(), ())
         } else {
-            self.derive(None)
+            self.fail(1)
         }
     }
 
@@ -48,12 +122,13 @@ impl <'a> Matcher<'a, ()> {
         if n > 0 {
             self.pop(n, &self.tail[0..n])
         } else {
-            self.derive(None)
+            self.fail(1)
         }
     }
 
-    pub fn space(self) -> Matcher<'a, ()> {
-        self.class(|_,c| c.is_whitespace()).derive(Some(()))
+    pub fn number<R:Number>(self) -> Matcher<'a,R> {
+        self.class(|_, c| c.is_ascii_digit())
+            .map(|s| warn_err(R::parse(s)))
     }
 
     pub fn word(self) -> Matcher<'a, &'a str> {
@@ -101,13 +176,16 @@ impl <'a, T, F> Iterator for Search<'a, T, F>
     type Item = T;
 
     fn next(&mut self) -> Option<T> {
-        for i in 0..self.m.tail.len() {
-            match (self.f)(Matcher::new(&self.m.tail[i..])) {
-                Matcher { val: None, .. } => {},
-                Matcher { tail, val } => {
-                    self.m = Matcher::new(tail);
-                    return val;
+        while self.m.tail.len() > 0 {
+            match (self.f)(Matcher::new(self.m.tail)) {
+                Matcher { tail, val: None } => {
+                    self.m.tail = tail;
+                },
+                ans => {
+                    self.m.tail = ans.tail;
+                    return ans.val;
                 }
+                
             }
         }
 
@@ -141,7 +219,7 @@ fn matcher_matches_word() {
     
     let ans = Matcher::new("99cooo_foo")
                      .word();
-    assert_eq!(ans.tail, "99cooo_foo");
+    assert_eq!(ans.tail, "9cooo_foo");
     assert_eq!(ans.result(), None);
 }
 
@@ -177,5 +255,30 @@ fn matcher_searches_in_string() {
     assert_eq!(ans.m.tail, "");
 
     assert_eq!(ans.next(), None);
+}
+
+#[test]
+fn matcher_makes_tupples () {
+    let ans = Matcher::new("425 foo\n661 bar\ncoo\n777 baz")
+                     .number::<u64>()
+                     .space()
+                     .add_word();
+
+    assert_eq!(ans.tail, "\n661 bar\ncoo\n777 baz");
+    assert_eq!(ans.result(), Some((425, "foo")));
+}
+
+#[test]
+fn matcher_matches_lines () {
+    let mut it = Matcher::new("425 foo\n661 bar\ncoo 123 bam\n777 baz")
+                        .search(|m| m.number::<u64>()
+                                     .space()
+                                     .add_word()
+                                     .skip_after(|c| c == '\n'));
+
+    assert_eq!(it.next(), Some((425, "foo")));
+    assert_eq!(it.next(), Some((661, "bar")));
+    assert_eq!(it.next(), Some((777, "baz")));
+    assert_eq!(it.m.tail, "");
 }
 

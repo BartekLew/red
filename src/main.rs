@@ -11,11 +11,11 @@ struct Warning<'a> {
 
 impl <'a> Warning<'a> {
     pub fn scan(m: Matcher<'a, ()>) -> Matcher<'a, Warning> {
-        m.const_str("warning:")
-         .space()
-         .class(|_,c| c != '\n')
-         .map(|text| Some(Warning { text }))
-         .skip_after(|c| c == '\n')
+        m.line(|m| m.or(|m| m.const_str("warning:"),
+                        |m| m.const_str("error:"))
+                    .space()
+                    .class(|_,c| c != '\n')
+                    .map(|text| Some(Warning { text })))
     }
 }
 

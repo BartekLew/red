@@ -31,7 +31,7 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: &self.tail[len..], val: Some(val) }
     }
 
-    fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
+    pub fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
         Matcher { tail: self.tail, val }
     }
 
@@ -109,6 +109,14 @@ impl <'a> Matcher<'a, ()> {
         Matcher { tail, val: Some(()) }
     }
 
+    pub fn line<R,F>(self, f:F) -> Matcher<'a, R>
+            where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
+        match f(Matcher::new(self.tail)) {
+            v if v.val.is_none() => self.derive(None).skip_after(|c| c == '\n'),
+            v => v.skip_after(|c| c == '\n')
+        }
+    }
+
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, ()> {
         if self.val.is_none() {
             return self;
@@ -160,6 +168,15 @@ impl <'a> Matcher<'a, ()> {
     pub fn search<R,F>(self, f: F) -> Search<'a, R, F> 
             where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
         Search { m: self, f }
+    }
+
+    pub fn or<R,F,F2>(self, f1: F, f2: F2) -> Matcher<'a, R>
+            where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R>,
+                  F2: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
+        match f1(Matcher::new(self.tail)) {
+            Matcher { tail: _, val: None } => f2(self),
+            m => m
+        }
     }
 }
 
@@ -331,3 +348,26 @@ fn match_warning () {
     assert_eq!(ans.tail, "warning: blah\nbbb\n");
     assert_eq!(ans.result(), None);
 }
+
+#[test]
+fn matcher_supports_alternative () {
+    let mut it = Matcher::new("foo:423 baz:222 boo:42; moo:11 bar:111")
+                        .search(|m| m.or(|m| m.const_str("foo:"),
+                                         |m| m.const_str("bar:"))
+                                     .number::<u64>());
+    assert_eq!(it.next(), Some(423));
+    assert_eq!(it.next(), Some(111));
+    assert_eq!(it.m.tail(), "");
+}
+
+#[test]
+fn matcher_supports_per_line_match() {
+    let mut it = Matcher::new("l: cat cat 123\ncoo coo442\nl: zaza")
+                        .search(|m| m.line(|m| m.const_str("l: ")
+                                                .word()));
+    
+    assert_eq!(it.next(), Some("cat"));
+    assert_eq!(it.next(), Some("zaza"));
+    assert_eq!(it.next(), None);
+}
+

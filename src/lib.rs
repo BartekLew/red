@@ -31,7 +31,11 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: &self.tail[len..], val: Some(val) }
     }
 
-    fn map<R,F>(self, f: F) -> Matcher<'a, R>
+    fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
+        Matcher { tail: self.tail, val }
+    }
+
+    pub fn map<R,F>(self, f: F) -> Matcher<'a, R>
             where F: FnOnce(T) -> Option<R> {
         match self {
             Matcher { tail, val: None } => Matcher { tail, val: None },
@@ -53,6 +57,10 @@ impl <'a, T> Matcher<'a,T> {
         }
 
         Matcher { tail: self.tail, val: None }
+    }
+
+    pub fn tail(&self) -> &str {
+        self.tail
     }
 
     pub fn skip_after<F>(mut self, f:F) -> Self
@@ -78,6 +86,10 @@ impl <'a, T> Matcher<'a,T> {
     }
 
     pub fn space(self) -> Matcher<'a, T> {
+        if self.val.is_none() {
+            return self
+        }
+
         Matcher::new(self.tail)
                .class(|_,c| c.is_whitespace())
                .map(|_| self.val)
@@ -98,8 +110,13 @@ impl <'a> Matcher<'a, ()> {
     }
 
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, ()> {
-        if self.tail.len() < refstr.len() {
-            self.fail(refstr.len())
+        if self.val.is_none() {
+            return self;
+        }
+
+        let len = self.tail.len();
+        if len < refstr.len() {
+            self.fail(1)
         } else if &self.tail[0..refstr.len()] == refstr {
             self.pop(refstr.len(), ())
         } else {
@@ -109,6 +126,10 @@ impl <'a> Matcher<'a, ()> {
 
     pub fn class<F>(self, f: F) -> Matcher<'a, &'a str>
             where F: Fn(usize, char) -> bool {
+        if self.val.is_none() {
+            return self.derive(None);
+        }
+
         let mut n = 0;
         while n < self.tail.len() {
             let c = self.tail.chars().nth(n).unwrap();
@@ -146,7 +167,7 @@ impl <'a> Matcher<'a, &'a str> {
     pub fn class<F>(self, f: F) -> Self
             where F: Fn(usize, char) -> bool {
         if self.val.is_none() {
-            return self
+            return self;
         }
 
         match Matcher::new(self.tail)
@@ -219,7 +240,7 @@ fn matcher_matches_word() {
     
     let ans = Matcher::new("99cooo_foo")
                      .word();
-    assert_eq!(ans.tail, "9cooo_foo");
+    assert_eq!(ans.tail(), "9cooo_foo");
     assert_eq!(ans.result(), None);
 }
 
@@ -228,7 +249,7 @@ fn matcher_matches_whitespace() {
     let ans = Matcher::new("  foobar 32")
                       .space()
                       .word();
-    assert_eq!(ans.tail, " 32");
+    assert_eq!(ans.tail(), " 32");
     assert_eq!(ans.result(), Some("foobar"));
 }
 
@@ -239,7 +260,7 @@ fn matcher_strings_concatenate() {
                      .class(|_, c| c.is_ascii_digit())
                      .class(|_, c| c.is_ascii_alphabetic());
 
-    assert_eq!(ans.tail, "_");
+    assert_eq!(ans.tail(), "_");
     assert_eq!(ans.val, Some("432foobar"));
 }
 
@@ -252,7 +273,7 @@ fn matcher_searches_in_string() {
     assert_eq!(ans.m.tail, " bar");
 
     assert_eq!(ans.next(), Some("bar"));
-    assert_eq!(ans.m.tail, "");
+    assert_eq!(ans.m.tail(), "");
 
     assert_eq!(ans.next(), None);
 }
@@ -264,7 +285,7 @@ fn matcher_makes_tupples () {
                      .space()
                      .add_word();
 
-    assert_eq!(ans.tail, "\n661 bar\ncoo\n777 baz");
+    assert_eq!(ans.tail(), "\n661 bar\ncoo\n777 baz");
     assert_eq!(ans.result(), Some((425, "foo")));
 }
 
@@ -279,6 +300,34 @@ fn matcher_matches_lines () {
     assert_eq!(it.next(), Some((425, "foo")));
     assert_eq!(it.next(), Some((661, "bar")));
     assert_eq!(it.next(), Some((777, "baz")));
-    assert_eq!(it.m.tail, "");
+    assert_eq!(it.m.tail(), "");
 }
 
+#[test]
+fn matcher_refuses_to_match_on_bad_state() {
+    let ans = Matcher::new("foo 123 bar")
+                     .number::<u64>()
+                     .add_word();
+
+    assert_eq!(ans.tail(), "oo 123 bar");
+    assert_eq!(ans.result(), None);
+
+    let ans = Matcher::new("foo 123 bar")
+                     .const_str("baah:")
+                     .word();
+
+    assert_eq!(ans.tail(), "oo 123 bar");
+    assert_eq!(ans.result(), None);
+}
+
+#[test]
+fn match_warning () {
+    let ans = Matcher::new("foo bar\nwarning: blah\nbbb\n")
+                    .const_str("warning:")
+                    .space()
+                    .class(|_,c| c != '\n')
+                    .skip_after(|c| c == '\n');
+
+    assert_eq!(ans.tail, "warning: blah\nbbb\n");
+    assert_eq!(ans.result(), None);
+}

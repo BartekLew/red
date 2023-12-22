@@ -31,8 +31,12 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: &self.tail[len..], val: Some(val) }
     }
 
-    pub fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
+    fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
         Matcher { tail: self.tail, val }
+    }
+
+    pub fn drop_val(self) -> Matcher<'a, ()> {
+        self.derive(Some(()))
     }
 
     pub fn map<R,F>(self, f: F) -> Matcher<'a, R>
@@ -384,9 +388,7 @@ fn matcher_supports_optionality() {
     fn act<'a>(m: Matcher<'a, ()>) -> Matcher<'a, &'a str> {
              m.const_str("error")
               .maybe(|m| m.const_str("[")
-                          .map(|_| Some(()))
-                          .word()
-                          .map(|_| Some(()))
+                          .word().drop_val()
                           .const_str("]"))
               .const_str(":")
               .space()

@@ -51,6 +51,14 @@ impl <'a, T> Matcher<'a,T> {
         }
     }
 
+    pub fn maybe<F>(self, f:F) -> Self
+            where F: Fn(Matcher<'a,()>) -> Self {
+        match f(Matcher::new(self.tail)) {
+            v if v.val.is_none() => self,
+            v => v
+        }
+    }
+
     fn fail<R>(mut self, offset: usize) -> Matcher<'a, R> {
         if self.tail.len() >= offset {
             self.tail = &self.tail[offset..];
@@ -371,3 +379,29 @@ fn matcher_supports_per_line_match() {
     assert_eq!(it.next(), None);
 }
 
+#[test]
+fn matcher_supports_optionality() {
+    fn act<'a>(m: Matcher<'a, ()>) -> Matcher<'a, &'a str> {
+             m.const_str("error")
+              .maybe(|m| m.const_str("[")
+                          .map(|_| Some(()))
+                          .word()
+                          .map(|_| Some(()))
+                          .const_str("]"))
+              .const_str(":")
+              .space()
+              .class(|_,c| c != '\n')
+    }
+
+    assert_eq!(act(Matcher::new("error: foo bar baz"))
+                          .result(),
+               Some("foo bar baz"));
+
+    assert_eq!(act(Matcher::new("error[caacoo]: foo bar baz"))
+                          .result(),
+               Some("foo bar baz"));
+
+    assert_eq!(act(Matcher::new("error[caac: foo bar baz"))
+                          .result(),
+               None);
+}

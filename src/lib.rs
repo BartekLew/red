@@ -1,11 +1,11 @@
 use std::num;
 use core::fmt;
 
-pub trait Number: Sized {
+pub trait Value: Sized {
     fn parse(src: &str) -> Result<Self, num::ParseIntError>;
 }
 
-impl Number for u64 {
+impl Value for u64 {
     fn parse(src: &str) -> Result<Self, num::ParseIntError> {
         u64::from_str_radix(src, 10)
     }
@@ -75,6 +75,21 @@ impl <'a, T> Matcher<'a,T> {
         self.tail
     }
 
+    pub fn const_str(self, refstr: &'a str) -> Matcher<'a, T> {
+        if self.val.is_none() {
+            return self;
+        }
+
+        let len = self.tail.len();
+        if len < refstr.len() {
+            self.fail(1)
+        } else if &self.tail[0..refstr.len()] == refstr {
+            Matcher { tail: &self.tail[refstr.len()..], val: self.val }
+        } else {
+            self.fail(1)
+        }
+    }
+
     pub fn skip_after<F>(mut self, f:F) -> Self
             where F: Fn(char) -> bool {
 
@@ -107,6 +122,14 @@ impl <'a, T> Matcher<'a,T> {
                .map(|_| self.val)
     }
 
+    pub fn add<R:Value>(self) -> Matcher<'a, (T, R)> {
+        let tail = self.tail;
+        self.then(|base|
+            Matcher::new(tail)
+                  .value::<R>()
+                  .map(|v| Some((base, v))))
+    }
+
     pub fn add_word(self) -> Matcher<'a, (T, &'a str)> {
         let tail = self.tail;
         self.then(|base|
@@ -126,21 +149,6 @@ impl <'a> Matcher<'a, ()> {
         match f(Matcher::new(self.tail)) {
             v if v.val.is_none() => self.derive(None).skip_after(|c| c == '\n'),
             v => v.skip_after(|c| c == '\n')
-        }
-    }
-
-    pub fn const_str(self, refstr: &'a str) -> Matcher<'a, ()> {
-        if self.val.is_none() {
-            return self;
-        }
-
-        let len = self.tail.len();
-        if len < refstr.len() {
-            self.fail(1)
-        } else if &self.tail[0..refstr.len()] == refstr {
-            self.pop(refstr.len(), ())
-        } else {
-            self.fail(1)
         }
     }
 
@@ -167,7 +175,7 @@ impl <'a> Matcher<'a, ()> {
         }
     }
 
-    pub fn number<R:Number>(self) -> Matcher<'a,R> {
+    pub fn value<R:Value>(self) -> Matcher<'a,R> {
         self.class(|_, c| c.is_ascii_digit())
             .map(|s| warn_err(R::parse(s)))
     }
@@ -180,6 +188,10 @@ impl <'a> Matcher<'a, ()> {
     pub fn search<R,F>(self, f: F) -> Search<'a, R, F> 
             where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
         Search { m: self, f }
+    }
+
+    pub fn split(self, sep: &'a str) -> Split<'a> {
+        Split { m: self, sep }
     }
 
     pub fn or<R,F,F2>(self, f1: F, f2: F2) -> Matcher<'a, R>
@@ -240,6 +252,41 @@ impl <'a, T, F> Iterator for Search<'a, T, F>
         }
 
         return None
+    }
+}
+
+pub struct Split<'a> {
+    m: Matcher<'a, ()>,
+    sep: &'a str
+}
+
+impl <'a> Iterator for Split<'a> {
+    type Item = Matcher<'a, ()>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let base = self.m.tail;
+
+        if self.m.tail.len() == 0 {
+            return None;
+        }
+
+        while self.m.tail.len() > 0 {
+            match Matcher::new(self.m.tail)
+                         .const_str(self.sep) {
+                Matcher { tail, val: None } => {
+                    self.m.tail = tail;
+                },
+                ans => {
+                    let head = &base[0..base.len() - ans.tail.len() - 1];
+                    self.m.tail = ans.tail;
+                    return Some(Matcher::new(head));
+                }
+            }
+        }
+
+        let rest = base;
+        self.m.tail = &self.m.tail[0..0];
+        return Some(Matcher::new(rest))
     }
 }
 
@@ -310,7 +357,7 @@ fn matcher_searches_in_string() {
 #[test]
 fn matcher_makes_tupples () {
     let ans = Matcher::new("425 foo\n661 bar\ncoo\n777 baz")
-                     .number::<u64>()
+                     .value::<u64>()
                      .space()
                      .add_word();
 
@@ -321,7 +368,7 @@ fn matcher_makes_tupples () {
 #[test]
 fn matcher_matches_lines () {
     let mut it = Matcher::new("425 foo\n661 bar\ncoo 123 bam\n777 baz")
-                        .search(|m| m.number::<u64>()
+                        .search(|m| m.value::<u64>()
                                      .space()
                                      .add_word()
                                      .skip_after(|c| c == '\n'));
@@ -335,7 +382,7 @@ fn matcher_matches_lines () {
 #[test]
 fn matcher_refuses_to_match_on_bad_state() {
     let ans = Matcher::new("foo 123 bar")
-                     .number::<u64>()
+                     .value::<u64>()
                      .add_word();
 
     assert_eq!(ans.tail(), "oo 123 bar");
@@ -366,7 +413,7 @@ fn matcher_supports_alternative () {
     let mut it = Matcher::new("foo:423 baz:222 boo:42; moo:11 bar:111")
                         .search(|m| m.or(|m| m.const_str("foo:"),
                                          |m| m.const_str("bar:"))
-                                     .number::<u64>());
+                                     .value::<u64>());
     assert_eq!(it.next(), Some(423));
     assert_eq!(it.next(), Some(111));
     assert_eq!(it.m.tail(), "");
@@ -407,3 +454,22 @@ fn matcher_supports_optionality() {
                           .result(),
                None);
 }
+
+#[test]
+fn matcher_supports_split() {
+    let ans : Vec<(&str, u64)> = 
+        Matcher::new("foo:30;bar:1;ugh;baz:5")
+               .split(";")
+               .map(|p| {
+                    println!("> '{}'", p.tail);
+                    p.word()
+                         .const_str(":")
+                         .add::<u64>()
+                         .result()})
+               .filter(|p| p.is_some())
+               .map(|p| p.unwrap())
+               .collect();
+
+    assert_eq!(ans, vec![("foo", 30), ("bar", 1), ("baz", 5)]);
+}
+

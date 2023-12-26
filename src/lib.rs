@@ -57,7 +57,7 @@ impl <'a, T> Matcher<'a,T> {
 
     pub fn maybe<F>(self, f:F) -> Self
             where F: Fn(Matcher<'a,()>) -> Self {
-        match f(Matcher::new(self.tail)) {
+        match f(self.dupl()) {
             v if v.val.is_none() => self,
             v => v
         }
@@ -73,6 +73,10 @@ impl <'a, T> Matcher<'a,T> {
 
     pub fn tail(&self) -> &str {
         self.tail
+    }
+
+    pub fn dupl(&self) -> Matcher<'a, ()> {
+        Matcher { tail: self.tail, val: Some(()) }
     }
 
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, T> {
@@ -93,8 +97,7 @@ impl <'a, T> Matcher<'a,T> {
     pub fn skip_after<F>(mut self, f:F) -> Self
             where F: Fn(char) -> bool {
 
-        match Matcher::new(self.tail)
-                      .class(|_,i| !f(i)) {
+        match self.dupl().class(|_,i| !f(i)) {
             Matcher { tail, val: Some(_) } => {
                 if tail.len() > 0 {
                     self.tail = &tail[1..]
@@ -117,9 +120,8 @@ impl <'a, T> Matcher<'a,T> {
             return self
         }
 
-        Matcher::new(self.tail)
-               .class(|_,c| c.is_whitespace())
-               .map(|_| self.val)
+        self.dupl().class(|_,c| c.is_whitespace())
+                   .map(|_| self.val)
     }
 
     pub fn add<R:Value>(self) -> Matcher<'a, (T, R)> {
@@ -146,7 +148,7 @@ impl <'a> Matcher<'a, ()> {
 
     pub fn line<R,F>(self, f:F) -> Matcher<'a, R>
             where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
-        match f(Matcher::new(self.tail)) {
+        match f(self.dupl()) {
             v if v.val.is_none() => self.derive(None).skip_after(|c| c == '\n'),
             v => v.skip_after(|c| c == '\n')
         }
@@ -197,8 +199,12 @@ impl <'a> Matcher<'a, ()> {
     pub fn or<R,F,F2>(self, f1: F, f2: F2) -> Matcher<'a, R>
             where F: Fn(Matcher<'a, ()>) -> Matcher<'a, R>,
                   F2: Fn(Matcher<'a, ()>) -> Matcher<'a, R> {
-        match f1(Matcher::new(self.tail)) {
-            Matcher { tail: _, val: None } => f2(self),
+        match f1(self.dupl()) {
+            Matcher { tail: _, val: None } =>
+                match f2(self.dupl()) {
+                    v if v.val.is_some() => v,
+                    _ => self.fail(1)
+                },
             m => m
         }
     }
@@ -211,8 +217,7 @@ impl <'a> Matcher<'a, &'a str> {
             return self;
         }
 
-        match Matcher::new(self.tail)
-                      .class(f) {
+        match self.dupl().class(f) {
             Matcher{ tail, val: Some(v) } => {
                 unsafe {
                     let base = self.val.unwrap();
@@ -239,7 +244,7 @@ impl <'a, T, F> Iterator for Search<'a, T, F>
 
     fn next(&mut self) -> Option<T> {
         while self.m.tail.len() > 0 {
-            match (self.f)(Matcher::new(self.m.tail)) {
+            match (self.f)(self.m.dupl()) {
                 Matcher { tail, val: None } => {
                     self.m.tail = tail;
                 },
@@ -271,8 +276,7 @@ impl <'a> Iterator for Split<'a> {
         }
 
         while self.m.tail.len() > 0 {
-            match Matcher::new(self.m.tail)
-                         .const_str(self.sep) {
+            match self.m.dupl().const_str(self.sep) {
                 Matcher { tail, val: None } => {
                     self.m.tail = tail;
                 },

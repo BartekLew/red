@@ -25,9 +25,20 @@ fn main() {
         match io::stdin().read(&mut buff) {
             Ok(n) if n > 0 => {
                 let fixed_buff = String::from_utf8_lossy(&mut buff);
-                Matcher::new(fixed_buff.as_ref())
-                       .search(|m| Warning::scan(m))
-                       .for_each(|w| println!("Warning: {}", w.text));
+                for msg in Matcher::new(fixed_buff.as_ref())
+                                   .split("\n\n") {
+                    if let Some(txt) = msg.dupl().search(|m| Warning::scan(m)).next() {
+                        if Matcher::new(txt.text)
+                                  .search(|m| m.or(|m| m.const_str("function is never used"),
+                                                   |m| m.const_str("generated ")
+                                                        .value::<u64>()
+                                                        .drop_val()
+                                                        .const_str(" warnings")))
+                                  .next().is_none() {
+                            println!("Warning: {}", txt.text);
+                        }
+                    }
+                }
             },
             Ok(_) => { break; },
             Err(e) => {

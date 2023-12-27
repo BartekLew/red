@@ -1,12 +1,15 @@
 use std::io;
 use std::io::Read;
 use std::str;
+use std::fmt;
 
 mod lib;
 use lib::Matcher;
 
 struct Warning<'a> {
-    text: &'a str
+    line: u64,
+    text: &'a str,
+    file: &'a str
 }
 
 impl <'a> Warning<'a> {
@@ -15,7 +18,18 @@ impl <'a> Warning<'a> {
                         |m| m.const_str("error:"))
                     .space()
                     .class(|_,c| c != '\n')
-                    .map(|text| Some(Warning { text })))
+                    .space()
+                    .const_str("--> ")
+                    .add_class(|_,c| c != ':')
+                    .const_str(":")
+                    .add::<u64>()
+                    .map(|((text,file),line)| Some(Warning { text, file, line })))
+    }
+}
+
+impl<'a> fmt::Display for Warning<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}({}): {}", self.file, self.line, self.text)
     }
 }
 
@@ -35,7 +49,7 @@ fn main() {
                                                         .drop_val()
                                                         .const_str(" warnings")))
                                   .next().is_none() {
-                            println!("Warning: {}", txt.text);
+                            println!("{}", txt);
                         }
                     }
                 }

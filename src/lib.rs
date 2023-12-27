@@ -55,6 +55,14 @@ impl <'a, T> Matcher<'a,T> {
         }
     }
 
+    fn if_ok<R,F>(self, f: F) -> Matcher<'a, R> 
+            where F: FnOnce(Matcher<'a,T>) -> Matcher<'a, R> {
+        match self.val {
+            None => Matcher { tail: self.tail, val: None },
+            Some(_) => f(self) 
+        }
+    }
+
     pub fn maybe<F>(self, f:F) -> Self
             where F: Fn(Matcher<'a,()>) -> Self {
         match f(self.dupl()) {
@@ -79,6 +87,7 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: self.tail, val: Some(()) }
     }
 
+ss
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, T> {
         if self.val.is_none() {
             return self;
@@ -138,6 +147,16 @@ impl <'a, T> Matcher<'a,T> {
             Matcher::new(tail)
                   .word()
                   .map(|v| Some((base, v))))
+    }
+
+    pub fn add_class<F>(self, f:F) -> Matcher<'a, (T, &'a str)>
+            where F: Fn(usize, char) -> bool {
+        self.if_ok(|m| {
+            let a = m.val.unwrap();
+            Matcher::new(m.tail)
+                   .class(f)
+                   .map(|v| Some((a, v)))
+        })
     }
 }
 

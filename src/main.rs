@@ -30,14 +30,22 @@ impl <'a> Warning<'a> {
     }
 }
 
+impl<'a> Warning <'a> {
+    fn skip_messages<F>(self, f:F) -> Option<Warning<'a>>
+            where F:Fn(Matcher<'a, ()>) -> Matcher<'a, ()> {
+        if Matcher::new(self.text).search(f).next().is_none() {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
 
 impl<'a> fmt::Display for Warning<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}({}:{}): {}", self.file, self.line, self.offset, self.text)
     }
 }
-
-//test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 struct TestStat {
     ok: u64, err: u64
@@ -67,6 +75,44 @@ impl<'a> fmt::Display for TestStat {
     }
 }
 
+enum Info<'a> {
+    Code(Warning<'a>),
+    Test(TestStat)
+}
+
+impl<'a> Info<'a> {
+    fn scan(msg: Matcher<'a, ()>) -> Option<Info> {
+        if let Some(txt) = msg.dupl()
+                              .search(|m| Warning::scan(m))
+                              .next() {
+            txt.skip_messages(|m|
+                    m.or(|m| m.const_str("function is never used"),
+                         |m| m.const_str("generated ")
+                              .value::<u64>()
+                              .drop_val()
+                              .const_str(" warnings")))
+               .map(|w| Info::Code(w))
+        } else if let Some(testrep) = msg.dupl().search(|m| TestStat::scan(m)).next() {
+            if testrep.err > 0 {
+                Some(Info::Test(testrep))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> fmt::Display for Info<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Code(i) => i.fmt(f),
+            Self::Test(i) => i.fmt(f)
+        }
+    }
+}
+
 fn main() {
     let mut buff: [u8;2028] = [0;2028];
     loop {
@@ -75,20 +121,8 @@ fn main() {
                 let fixed_buff = String::from_utf8_lossy(&mut buff);
                 for msg in Matcher::new(fixed_buff.as_ref())
                                    .split("\n\n") {
-                    if let Some(txt) = msg.dupl().search(|m| Warning::scan(m)).next() {
-                        if Matcher::new(txt.text)
-                                  .search(|m| m.or(|m| m.const_str("function is never used"),
-                                                   |m| m.const_str("generated ")
-                                                        .value::<u64>()
-                                                        .drop_val()
-                                                        .const_str(" warnings")))
-                                  .next().is_none() {
-                            println!("{}", txt);
-                        }
-                    } else if let Some(testrep) = msg.dupl().search(|m| TestStat::scan(m)).next() {
-                        if testrep.err > 0 {
-                            println!("{}", testrep)
-                        }
+                    if let Some(msg) = Info::scan(msg) {
+                        println!("{}", msg);
                     }
                 }
             },

@@ -9,7 +9,8 @@ use lib::Matcher;
 struct Warning<'a> {
     line: u64,
     text: &'a str,
-    file: &'a str
+    file: &'a str,
+    offset: u64
 }
 
 impl <'a> Warning<'a> {
@@ -23,13 +24,46 @@ impl <'a> Warning<'a> {
                     .add_class(|_,c| c != ':')
                     .const_str(":")
                     .add::<u64>()
-                    .map(|((text,file),line)| Some(Warning { text, file, line })))
+                    .const_str(":")
+                    .add::<u64>()
+                    .map(|(((text,file),line),offset)| Some(Warning { text, file, line, offset })))
     }
 }
 
+
 impl<'a> fmt::Display for Warning<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}({}): {}", self.file, self.line, self.text)
+        write!(f, "{}({}:{}): {}", self.file, self.line, self.offset, self.text)
+    }
+}
+
+//test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+struct TestStat {
+    ok: u64, err: u64
+}
+
+impl TestStat {
+    pub fn scan(m:Matcher<'_, ()>) -> Matcher<'_, Self> {
+        m.line(|m| m.const_str("test result: ")
+                    .word()
+                    .drop_val()
+                    .const_str(". ")
+                    .value::<u64>()
+                    .const_str(" passed; ")
+                    .add::<u64>()
+                    .map(|(ok, err)| Some(TestStat { ok, err })))
+    }
+}
+
+impl<'a> fmt::Display for TestStat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let total = self.ok + self.err;
+        if total > 0 {
+            write!(f, "tests {}/{} {}%", self.ok, total, self.ok*100/total)
+        } else {
+            write!(f, "no tests to run")
+        }
     }
 }
 
@@ -50,6 +84,10 @@ fn main() {
                                                         .const_str(" warnings")))
                                   .next().is_none() {
                             println!("{}", txt);
+                        }
+                    } else if let Some(testrep) = msg.dupl().search(|m| TestStat::scan(m)).next() {
+                        if testrep.err > 0 {
+                            println!("{}", testrep)
                         }
                     }
                 }

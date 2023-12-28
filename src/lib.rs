@@ -87,7 +87,6 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: self.tail, val: Some(()) }
     }
 
-ss
     pub fn const_str(self, refstr: &'a str) -> Matcher<'a, T> {
         if self.val.is_none() {
             return self;
@@ -483,12 +482,11 @@ fn matcher_supports_split() {
     let ans : Vec<(&str, u64)> = 
         Matcher::new("foo:30;bar:1;ugh;baz:5")
                .split(";")
-               .map(|p| {
-                    println!("> '{}'", p.tail);
+               .map(|p| 
                     p.word()
                          .const_str(":")
                          .add::<u64>()
-                         .result()})
+                         .result())
                .filter(|p| p.is_some())
                .map(|p| p.unwrap())
                .collect();

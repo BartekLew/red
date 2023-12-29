@@ -1,11 +1,11 @@
 use core::fmt;
 
-pub trait Value: Sized {
-    fn parse<'a>(src: Matcher<'a, ()>) -> Matcher<'a, Self>;
+pub trait Value<'a>: Sized {
+    fn parse(src: Matcher<'a, ()>) -> Matcher<'a, Self>;
 }
 
-impl Value for u64 {
-    fn parse<'a>(src: Matcher<'a, ()>) -> Matcher<'a, u64> {
+impl<'a> Value<'a> for u64 {
+    fn parse(src: Matcher<'a, ()>) -> Matcher<'a, u64> {
         src.class(|_,c| c.is_ascii_digit())
            .map(|s| warn_err(u64::from_str_radix(s, 10)))
     }
@@ -132,7 +132,7 @@ impl <'a, T> Matcher<'a,T> {
                    .map(|_| self.val)
     }
 
-    pub fn add<R:Value>(self) -> Matcher<'a, (T, R)> {
+    pub fn add<R:Value<'a>>(self) -> Matcher<'a, (T, R)> {
         let tail = self.tail;
         self.then(|base|
             Matcher::new(tail)
@@ -195,7 +195,7 @@ impl <'a> Matcher<'a, ()> {
         }
     }
 
-    pub fn value<R:Value>(self) -> Matcher<'a,R> {
+    pub fn value<R:Value<'a>>(self) -> Matcher<'a,R> {
         R::parse(self)
     }
 

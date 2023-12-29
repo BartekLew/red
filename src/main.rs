@@ -5,6 +5,7 @@ use std::fmt;
 
 mod lib;
 use lib::Matcher;
+use lib::Value;
 
 struct Warning<'a> {
     line: u64,
@@ -13,8 +14,8 @@ struct Warning<'a> {
     offset: u64
 }
 
-impl <'a> Warning<'a> {
-    pub fn scan(m: Matcher<'a, ()>) -> Matcher<'a, Warning> {
+impl <'a> Value<'a> for Warning<'a> {
+    fn parse(m: Matcher<'a, ()>) -> Matcher<'a, Warning> {
         m.line(|m| m.or(|m| m.const_str("warning:"),
                         |m| m.const_str("error:"))
                     .space()
@@ -60,8 +61,8 @@ struct TestStat {
     ok: u64, err: u64
 }
 
-impl TestStat {
-    pub fn scan(m:Matcher<'_, ()>) -> Matcher<'_, Self> {
+impl <'a> Value<'a> for TestStat {
+    fn parse(m:Matcher<'a, ()>) -> Matcher<'a, Self> {
         m.line(|m| m.const_str("test result: ")
                     .word()
                     .drop_val()
@@ -71,7 +72,9 @@ impl TestStat {
                     .add::<u64>()
                     .map(|(ok, err)| Some(TestStat { ok, err })))
     }
+}
 
+impl TestStat {
     pub fn select(self) -> Option<TestStat> {
         if self.err > 0 {
             Some(self)
@@ -99,9 +102,9 @@ enum Info<'a> {
 
 impl<'a> Info<'a> {
     fn scan(msg: Matcher<'a, ()>) -> Option<Info> {
-        if let Some(txt) = msg.dupl().search(|m| Warning::scan(m)).next() {
+        if let Some(txt) = msg.dupl().search(|m| m.value::<Warning<'a>>()).next() {
             txt.select().map(|w| Info::Code(w))
-        } else if let Some(testrep) = msg.dupl().search(|m| TestStat::scan(m)).next() {
+        } else if let Some(testrep) = msg.dupl().search(|m| m.value::<TestStat>()).next() {
             testrep.select().map(|w| Info::Test(w))
         } else {
             None

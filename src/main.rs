@@ -17,7 +17,12 @@ struct Warning<'a> {
 impl <'a> Value<'a> for Warning<'a> {
     fn parse(m: Matcher<'a, ()>) -> Matcher<'a, Warning> {
         m.line(|m| m.or(|m| m.const_str("warning:"),
-                        |m| m.const_str("error:"))
+                        |m| m.const_str("error")
+                             .maybe(|m| m.const_str("[")
+                                         .class(|_,c| c != ']')
+                                         .const_str("]")
+                                         .drop_val())
+                             .const_str(":"))
                     .space()
                     .class(|_,c| c != '\n')
                     .space()

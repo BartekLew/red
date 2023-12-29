@@ -31,13 +31,22 @@ impl <'a> Warning<'a> {
 }
 
 impl<'a> Warning <'a> {
-    fn skip_messages<F>(self, f:F) -> Option<Warning<'a>>
+    fn drop_if<F>(self, f:F) -> Option<Warning<'a>>
             where F:Fn(Matcher<'a, ()>) -> Matcher<'a, ()> {
         if Matcher::new(self.text).search(f).next().is_none() {
             Some(self)
         } else {
             None
         }
+    }
+
+    fn select(self) -> Option<Warning<'a>> {
+        self.drop_if(|m|
+                m.or(|m| m.const_str("function is never used"),
+                     |m| m.const_str("generated ")
+                          .value::<u64>()
+                          .drop_val()
+                          .const_str(" warnings")))
     }
 }
 
@@ -62,6 +71,14 @@ impl TestStat {
                     .add::<u64>()
                     .map(|(ok, err)| Some(TestStat { ok, err })))
     }
+
+    pub fn select(self) -> Option<TestStat> {
+        if self.err > 0 {
+            Some(self)
+        } else {
+            None
+        }
+    }
 }
 
 impl<'a> fmt::Display for TestStat {
@@ -82,22 +99,10 @@ enum Info<'a> {
 
 impl<'a> Info<'a> {
     fn scan(msg: Matcher<'a, ()>) -> Option<Info> {
-        if let Some(txt) = msg.dupl()
-                              .search(|m| Warning::scan(m))
-                              .next() {
-            txt.skip_messages(|m|
-                    m.or(|m| m.const_str("function is never used"),
-                         |m| m.const_str("generated ")
-                              .value::<u64>()
-                              .drop_val()
-                              .const_str(" warnings")))
-               .map(|w| Info::Code(w))
+        if let Some(txt) = msg.dupl().search(|m| Warning::scan(m)).next() {
+            txt.select().map(|w| Info::Code(w))
         } else if let Some(testrep) = msg.dupl().search(|m| TestStat::scan(m)).next() {
-            if testrep.err > 0 {
-                Some(Info::Test(testrep))
-            } else {
-                None
-            }
+            testrep.select().map(|w| Info::Test(w))
         } else {
             None
         }

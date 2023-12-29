@@ -1,12 +1,13 @@
 use core::fmt;
 
 pub trait Value: Sized {
-    fn parse(src: &str) -> Result<Self, String>;
+    fn parse<'a>(src: Matcher<'a, ()>) -> Matcher<'a, Self>;
 }
 
 impl Value for u64 {
-    fn parse(src: &str) -> Result<Self, String> {
-        u64::from_str_radix(src, 10).map_err(|e| e.to_string())
+    fn parse<'a>(src: Matcher<'a, ()>) -> Matcher<'a, u64> {
+        src.class(|_,c| c.is_ascii_digit())
+           .map(|s| warn_err(u64::from_str_radix(s, 10)))
     }
 }
 
@@ -195,8 +196,7 @@ impl <'a> Matcher<'a, ()> {
     }
 
     pub fn value<R:Value>(self) -> Matcher<'a,R> {
-        self.class(|_, c| c.is_ascii_digit())
-            .map(|s| warn_err(R::parse(s)))
+        R::parse(self)
     }
 
     pub fn word(self) -> Matcher<'a, &'a str> {

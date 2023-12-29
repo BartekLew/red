@@ -1,13 +1,12 @@
-use std::num;
 use core::fmt;
 
 pub trait Value: Sized {
-    fn parse(src: &str) -> Result<Self, num::ParseIntError>;
+    fn parse(src: &str) -> Result<Self, String>;
 }
 
 impl Value for u64 {
-    fn parse(src: &str) -> Result<Self, num::ParseIntError> {
-        u64::from_str_radix(src, 10)
+    fn parse(src: &str) -> Result<Self, String> {
+        u64::from_str_radix(src, 10).map_err(|e| e.to_string())
     }
 }
 

@@ -492,4 +492,3 @@ fn matcher_supports_split() {
 
     assert_eq!(ans, vec![("foo", 30), ("bar", 1), ("baz", 5)]);
 }
-

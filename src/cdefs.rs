@@ -58,6 +58,54 @@ impl<'a> fmt::Display for CFieldDef<'a> {
     }
 }
 
+struct CUnit {}
+impl CUnit {
+    fn includes(arr: Vec<&str>) -> Self {
+        for u in arr {
+            println!("#include<{}>", u);
+        }
+
+        Self {}
+    }
+
+    fn struct_def<'a, I>(self, name: &str, fields: I) -> Self 
+            where I: Iterator<Item=&'a CFieldDef<'a>> {
+        println!("struct {} {{", name);
+        for f in fields {
+            println!("    {} {};", f.typ, f.name);
+        }
+        println!("}};\n");
+
+        self
+    }
+
+    fn def_type4size(self) -> Self {
+        println!("char *type4size(size_t len) {{");
+        println!("    if(len == 4) return \"u32\";");
+        println!("    if(len == 8) return \"u64\";");
+        println!("    return \"UNKNOWNTYPE\";\n}}");
+
+        self
+    }
+
+    fn main<'a, I>(self, name: &str, fields: I) 
+            where I: Iterator<Item=&'a CFieldDef<'a>> {
+        println!("int main() {{");
+        println!("    int offset = 0;");
+        println!("    int newoff;");
+        println!("    printf(\"struct {} {{\\n\");", name);
+        for f in fields {
+            println!("    newoff = offsetof(struct {}, {});", name, f.name);
+            println!("    if(newoff > offset) {{");
+            println!("        printf(\"    _: %s,\\n\", type4size(newoff - offset));");
+            println!("        offset = newoff;\n    }}");
+            println!("    printf(\"    _{}: %s,\\n\", type4size(sizeof({})));", f.name, f.typ);
+            println!("    offset += sizeof({});", f.typ);
+        }
+        println!("    printf(\"}}\");\n}}");
+    }
+}
+
 fn main() {
     match load_stdin() {
         Ok(s) => {
@@ -75,36 +123,10 @@ fn main() {
                                           .value::<CFieldDef>())
                              .collect();
     
-                    println!("#include<stdio.h>");
-                    println!("#include<stddef.h>");
-                    println!("#include<sys/types.h>");
-                    println!("#include<sys/stat.h>\n");
-
-                    println!("struct {} {{", s);
-                    for f in fields.iter() {
-                        println!("    {} {};", f.typ, f.name);
-                    }
-                    println!("}};\n");
-    
-                    println!("char *type4size(size_t len) {{");
-                    println!("    if(len == 4) return \"u32\";");
-                    println!("    if(len == 8) return \"u64\";");
-                    println!("    return \"UNKNOWNTYPE\";\n}}");
-
-                    println!("int main() {{");
-                    println!("    int offset = 0;");
-                    println!("    int newoff;");
-                    println!("    printf(\"struct {} {{\\n\");", s);
-                    for f in fields.iter() {
-
-                        println!("    newoff = offsetof(struct {}, {});", s, f.name);
-                        println!("    if(newoff > offset) {{");
-                        println!("        printf(\"    _: %s,\\n\", type4size(newoff - offset));");
-                        println!("        offset = newoff;\n    }}");
-                        println!("    printf(\"    _{}: %s,\\n\", type4size(sizeof({})));", f.name, f.typ);
-                        println!("    offset += sizeof({});", f.typ);
-                    }
-                    println!("    printf(\"}}\");\n}}");
+                    CUnit::includes(vec!["stdio.h", "stddef.h", "sys/types.h", "sys/stat.h"])
+                         .struct_def(s, fields.iter())
+                         .def_type4size()
+                         .main(s, fields.iter());
                 }, None => {}
             }
         }, Err(_) => {}

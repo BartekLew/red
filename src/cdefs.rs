@@ -61,26 +61,52 @@ impl<'a> fmt::Display for CFieldDef<'a> {
 fn main() {
     match load_stdin() {
         Ok(s) => {
-            let fields : Vec<CFieldDef> =
+            let mut struc_m : Search<&str,_> =
                 Matcher::new(s.as_str())
-                       .search(|m| m.maybe(|m| m.space())
-                                    .value::<CFieldDef>())
-                       .collect();
+                        .search(|m| m.const_str("struct")
+                                     .space()
+                                     .word()
+                                     .space()
+                                     .const_str("{")); 
+            match struc_m.next() {
+                Some(s) => {
+                    let fields : Vec<CFieldDef> =
+                    struc_m.m.search(|m| m.maybe(|m| m.space())
+                                          .value::<CFieldDef>())
+                             .collect();
     
-            println!("struct S {{");
-            for f in fields.iter() {
-                println!("    {} {};", f.typ, f.name);
-            }
-            println!("}}\n");
+                    println!("#include<stdio.h>");
+                    println!("#include<stddef.h>");
+                    println!("#include<sys/types.h>");
+                    println!("#include<sys/stat.h>\n");
 
-            println!("int main() {{");
-            for f in fields.iter() {
-                println!("    printf(\"{}: %ld\\n\", offsetof(S, {}), sizeof({}));",
-                         f.name, f.name, f.typ);
+                    println!("struct {} {{", s);
+                    for f in fields.iter() {
+                        println!("    {} {};", f.typ, f.name);
+                    }
+                    println!("}};\n");
+    
+                    println!("char *type4size(size_t len) {{");
+                    println!("    if(len == 4) return \"u32\";");
+                    println!("    if(len == 8) return \"u64\";");
+                    println!("    return \"UNKNOWNTYPE\";\n}}");
+
+                    println!("int main() {{");
+                    println!("    int offset = 0;");
+                    println!("    int newoff;");
+                    println!("    printf(\"struct {} {{\\n\");", s);
+                    for f in fields.iter() {
+
+                        println!("    newoff = offsetof(struct {}, {});", s, f.name);
+                        println!("    if(newoff > offset) {{");
+                        println!("        printf(\"    _: %s,\\n\", type4size(newoff - offset));");
+                        println!("        offset = newoff;\n    }}");
+                        println!("    printf(\"    _{}: %s,\\n\", type4size(sizeof({})));", f.name, f.typ);
+                        println!("    offset += sizeof({});", f.typ);
+                    }
+                    println!("    printf(\"}}\");\n}}");
+                }, None => {}
             }
-            println!("}}");
-        }, Err(e) => {
-            println!("'{:?}'", e);
-        }
+        }, Err(_) => {}
     }
 }

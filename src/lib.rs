@@ -251,7 +251,7 @@ impl <'a> Matcher<'a, &'a str> {
 
 pub struct Search<'a, T, F> 
             where F: Fn(Matcher<'a, ()>) -> Matcher<'a, T> {
-    m: Matcher<'a, ()>,
+    pub m: Matcher<'a, ()>,
     f: F
 }
 

@@ -100,15 +100,77 @@ impl<'a> fmt::Display for TestStat {
     }
 }
 
+pub struct TestFail <'a> {
+    pub case: &'a str,
+    pub input: String,
+    pub file: &'a str,
+    pub line: u64,
+    pub col: u64
+}
+
+impl <'a> Value<'a> for TestFail<'a> {
+    fn parse(m:Matcher<'a, ()>) -> Matcher<'a, Self> {
+        let m2 = m.dupl()
+                  .line(|m| m.const_str("---- ")
+                            .word()
+                            .const_str(" stdout ----\n"));
+
+        if m2.is_err() { return m2.derive(None) }
+
+        let (tail, val) =  m2.as_tupple();
+        let case = val.unwrap();
+        let mut out = String::with_capacity(2048);
+
+        for text in Matcher::new(tail)
+                            .search(|m| m.class(|_,c| c != '\n')
+                                         .const_str("\n")) {
+            let mut it = 
+                Matcher::new(text)
+                        .search(|m| m.word()
+                                     .const_str(":")
+                                     .add::<u64>()
+                                     .const_str(":")
+                                     .add::<u64>()
+                                     .map(|((file, line), col)| Some((file, line, col))));
+
+            if let Some((file, line, col)) = it.next() {
+                return Matcher { val: Some(TestFail { case, file, line, col, input: out + "\n" + text }),
+                                                      tail: it.m.tail };
+            } else {
+                if out.len() == 0 {
+                    out = out + text;
+                }
+                else {
+                    out = out + "\n" + text;
+                }
+            }
+        }
+
+        let (tail, _val) = m.as_tupple();
+        Matcher { tail: &tail[1..], val: None }
+    }
+}
+
+impl<'a> fmt::Display for TestFail<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "\n{}({}:{}): case {} failed:\n{}\n", self.file,
+                  self.line, self.col, self.case, self.input)
+    }
+}
+
+
 enum Info<'a> {
     Code(Warning<'a>),
-    Test(TestStat)
+    Test(TestStat),
+    Fail(TestFail<'a>)
 }
 
 impl<'a> Info<'a> {
     fn scan(msg: Matcher<'a, ()>) -> Option<Info> {
         if let Some(txt) = msg.dupl().search(|m| m.value::<Warning<'a>>()).next() {
             txt.select().map(|w| Info::Code(w))
+        } else if let Some(fail) = msg.dupl().search(|m| m.value::<TestFail>()).next() {
+            Some(Info::Fail(fail))
         } else if let Some(testrep) = msg.dupl().search(|m| m.value::<TestStat>()).next() {
             testrep.select().map(|w| Info::Test(w))
         } else {
@@ -121,7 +183,8 @@ impl<'a> fmt::Display for Info<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Code(i) => i.fmt(f),
-            Self::Test(i) => i.fmt(f)
+            Self::Test(i) => i.fmt(f),
+            Self::Fail(i) => i.fmt(f),
         }
     }
 }

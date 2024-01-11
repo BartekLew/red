@@ -22,8 +22,8 @@ pub fn warn_err<T, E:fmt::Display>(r: Result<T,E>) -> Option<T> {
 }
 
 pub struct Matcher<'a, T> {
-    tail: &'a str,
-    val: Option<T>
+    pub tail: &'a str,
+    pub val: Option<T>
 }
 
 impl <'a, T> Matcher<'a,T> {
@@ -31,7 +31,7 @@ impl <'a, T> Matcher<'a,T> {
         Matcher { tail: &self.tail[len..], val: Some(val) }
     }
 
-    fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
+    pub fn derive<R>(self, val: Option<R>) -> Matcher<'a, R> {
         Matcher { tail: self.tail, val }
     }
 
@@ -47,7 +47,7 @@ impl <'a, T> Matcher<'a,T> {
         }
     }
 
-    fn then<R,F>(self, f: F) -> Matcher<'a, R> 
+    pub fn then<R,F>(self, f: F) -> Matcher<'a, R> 
             where F: FnOnce(T) -> Matcher<'a, R> {
         match self.val {
             None => Matcher { tail: self.tail, val: None },
@@ -61,6 +61,10 @@ impl <'a, T> Matcher<'a,T> {
             None => Matcher { tail: self.tail, val: None },
             Some(_) => f(self) 
         }
+    }
+
+    pub fn is_err(&self) -> bool {
+        self.val.is_none()
     }
 
     pub fn maybe<F>(self, f:F) -> Self
@@ -123,6 +127,10 @@ impl <'a, T> Matcher<'a,T> {
         self.val
     }
 
+    pub fn as_tupple(self) -> (&'a str, Option<T>) {
+        (self.tail, self.val)
+    }
+
     pub fn space(self) -> Matcher<'a, T> {
         if self.val.is_none() {
             return self
@@ -156,6 +164,17 @@ impl <'a, T> Matcher<'a,T> {
                    .class(f)
                    .map(|v| Some((a, v)))
         })
+    }
+}
+
+impl <'a, T: std::fmt::Display> Matcher<'a, T> {
+    pub fn dump(self, prefix: &str) -> Self {
+        match &self.val { 
+            Some(v) => { eprintln!("{}Matcher {} <{}>", prefix, v, self.tail); },
+            None => {}
+        }
+
+        self
     }
 }
 
@@ -195,17 +214,12 @@ impl <'a> Matcher<'a, ()> {
         }
     }
 
-    pub fn dump(self, prefix: &str) -> Self {
-        eprintln!("{}Matcher<{}>", prefix, self.tail);
-        self
-    }
-
     pub fn value<R:Value<'a>>(self) -> Matcher<'a,R> {
         R::parse(self)
     }
 
     pub fn word(self) -> Matcher<'a, &'a str> {
-        self.class(|n, c| (c.is_alphanumeric() || c == '_')
+        self.class(|n, c| (c.is_alphanumeric() || c == '_' || c == '/' || c == '.')
                        && (n != 0 || !c.is_ascii_digit()))
     }
 

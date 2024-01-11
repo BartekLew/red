@@ -36,7 +36,7 @@ impl <'a, T> Matcher<'a,T> {
     }
 
     pub fn drop_val(self) -> Matcher<'a, ()> {
-        self.derive(Some(()))
+        self.map(|_| Some(()))
     }
 
     pub fn map<R,F>(self, f: F) -> Matcher<'a, R>
@@ -193,6 +193,11 @@ impl <'a> Matcher<'a, ()> {
         } else {
             self.fail(1)
         }
+    }
+
+    pub fn dump(self, prefix: &str) -> Self {
+        eprintln!("{}Matcher<{}>", prefix, self.tail);
+        self
     }
 
     pub fn value<R:Value<'a>>(self) -> Matcher<'a,R> {
@@ -491,4 +496,18 @@ fn matcher_supports_split() {
                .collect();
 
     assert_eq!(ans, vec![("foo", 30), ("bar", 1), ("baz", 5)]);
+}
+
+#[test]
+fn matcher_maybe_case2 () {
+    let m = Matcher::new("error: this file ")
+                   .const_str("error")
+                   .maybe(|m| m.const_str("[")
+                               .class(|_,c| c != ']')
+                               .const_str("]")
+                               .drop_val())
+                   .const_str(":");
+
+    assert_eq!(m.val, Some(()));
+    assert_eq!(m.tail(), " this file ");
 }

@@ -11,12 +11,13 @@ struct Warning<'a> {
     line: u64,
     text: &'a str,
     file: &'a str,
-    offset: u64
+    offset: u64,
+    msg: &'a str
 }
 
 impl <'a> Value<'a> for Warning<'a> {
     fn parse(m: Matcher<'a, ()>) -> Matcher<'a, Warning> {
-        m.line(|m| m.or(|m| m.const_str("warning:"),
+        let m = m.line(|m| m.or(|m| m.const_str("warning:"),
                         |m| m.const_str("error")
                              .maybe(|m| m.const_str("[")
                                          .class(|_,c| c != ']')
@@ -31,8 +32,13 @@ impl <'a> Value<'a> for Warning<'a> {
                     .const_str(":")
                     .add::<u64>()
                     .const_str(":")
-                    .add::<u64>()
-                    .map(|(((text,file),line),offset)| Some(Warning { text, file, line, offset })))
+                    .add::<u64>());
+         match m.as_tupple() {
+            (tail, Some((((text, file), line), offset))) => 
+                Matcher { tail: "", val: Some(Warning { text, file, line, offset, msg: tail }) },
+            (tail, None) => Matcher {tail, val: None}
+         } 
+
     }
 }
 
@@ -58,7 +64,7 @@ impl<'a> Warning <'a> {
 
 impl<'a> fmt::Display for Warning<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}({}:{}): {}", self.file, self.line, self.offset, self.text)
+        write!(f, "{}({}:{}): {}\n{}", self.file, self.line, self.offset, self.text, self.msg)
     }
 }
 

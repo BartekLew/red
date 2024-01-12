@@ -55,6 +55,22 @@ impl <'a, T> Matcher<'a,T> {
         }
     }
 
+    pub fn one_of(mut self, opts: &[&'a str]) -> Matcher<'a, T> {
+        if self.val.is_none() { return self; }
+
+        for opt in opts {
+            match Matcher::new(self.tail).const_str(opt) {
+                m if !m.val.is_none() => {
+                    self.tail = m.tail;
+                    return self;
+                }, 
+                _ => {}
+            }
+        }
+
+        self.fail(1)
+    }
+    
     fn if_ok<R,F>(self, f: F) -> Matcher<'a, R> 
             where F: FnOnce(Matcher<'a,T>) -> Matcher<'a, R> {
         match self.val {
@@ -524,4 +540,16 @@ fn matcher_maybe_case2 () {
 
     assert_eq!(m.val, Some(()));
     assert_eq!(m.tail(), " this file ");
+}
+
+#[test]
+fn matcher_matches_from_list () {
+    let mut it = Matcher::new("x:1 b=2 c:4")
+                        .search(|m| m.word()
+                                     .one_of(&[":","="])
+                                     .add::<u64>());
+    assert_eq!(it.next(), Some(("x", 1)));
+    assert_eq!(it.next(), Some(("b", 2)));
+    assert_eq!(it.next(), Some(("c", 4)));
+    assert_eq!(it.next(), None);
 }

@@ -56,7 +56,7 @@ impl<'a> Warning <'a> {
 
     fn select(self) -> Option<Warning<'a>> {
         self.drop_if(|m|
-                m.or(|m| m.const_str("never used"),
+                m.or(|m| m.one_of(&["never used", "never read", "never constructed"]),
                      |m| m.const_str("generated ")
                           .value::<u64>()
                           .drop_val()
@@ -120,8 +120,8 @@ impl <'a> Value<'a> for TestFail<'a> {
     fn parse(m:Matcher<'a, ()>) -> Matcher<'a, Self> {
         let m2 = m.dupl()
                   .line(|m| m.const_str("---- ")
-                            .word()
-                            .const_str(" stdout ----\n"));
+                             .word()
+                             .const_str(" stdout ----\n"));
 
         if m2.is_err() { return m2.derive(None) }
 

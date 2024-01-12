@@ -3,9 +3,11 @@ use std::slice;
 use std::str;
 use std::fs;
 use std::io::Read;
+use cstr::cstr;
+use std::ffi::CStr;
 
 extern "C" {
-    fn open(fname: *const u8, flags: i32, mode: i32) -> i32;
+    fn open(fname: *const i8, flags: i32, mode: i32) -> i32;
     fn fstat(fd: i32, buff: &mut Stat) -> i32;
     fn ftruncate(fd: i32, size: usize) -> i32;
     fn mmap(addr: *mut u8, size: usize, protection: i64, flags: i64,
@@ -38,17 +40,18 @@ const PROT_WRITE : i64 = 2;
 const MAP_SHARED: i64 = 1;
 
 impl<'a> File<'a> {
-    pub fn open(name: &str) -> Result<File,String> {
+    pub fn open(name: &CStr) -> Result<File,String> {
+        let rname = name.to_str().unwrap();
         unsafe {
-            let fd = open(name.as_bytes().as_ptr(), O_RDWR | O_CREAT, 0o744);
+            let fd = open(name.as_ptr(), O_RDWR | O_CREAT, 0o744);
             if fd < 0 {
-                return Err(format!("Can't open file '{}': {}", name, libc_err()));
+                return Err(format!("Can't open file '{}': {}", rname, libc_err()));
             }
 
             match Stat::from_fd(fd).map(|x| x.size()) {
                 Ok(size) => {
                     Self::mmap(fd, size)
-                        .map(|buff| File { name, buff, fd })
+                        .map(|buff| File { name: rname, buff, fd })
                 },
                 Err(e) => Err(e)
             }
@@ -150,7 +153,7 @@ impl Stat {
 #[test]
 fn test_filemod () {
     {
-        let mut f = File::open("/tmp/foo.x\0").unwrap();
+        let mut f = File::open(cstr!("/tmp/foo.x")).unwrap();
         f.resize(0);
 
         f.write_at(0, "foobaz\n".as_bytes());

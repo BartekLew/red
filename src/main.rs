@@ -3,9 +3,11 @@ use std::io::Read;
 use std::str;
 use std::fmt;
 
-mod lib;
-use lib::Matcher;
-use lib::Value;
+mod file;
+
+mod matcher;
+use matcher::Matcher;
+use matcher::Value;
 
 struct Warning<'a> {
     line: u64,
@@ -54,7 +56,7 @@ impl<'a> Warning <'a> {
 
     fn select(self) -> Option<Warning<'a>> {
         self.drop_if(|m|
-                m.or(|m| m.const_str("function is never used"),
+                m.or(|m| m.const_str("never used"),
                      |m| m.const_str("generated ")
                           .value::<u64>()
                           .drop_val()

@@ -5,8 +5,10 @@ use std::io;
 use std::io::Read;
 use std::fmt;
 
-mod lib;
-use lib::*;
+mod matcher;
+use matcher::Matcher;
+use matcher::Value;
+use matcher::Search;
 
 fn load_stdin() -> Result<String, String> {
     let mut remains = 20480;

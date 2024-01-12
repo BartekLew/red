@@ -120,8 +120,8 @@ impl <'a> Value<'a> for TestFail<'a> {
     fn parse(m:Matcher<'a, ()>) -> Matcher<'a, Self> {
         let m2 = m.dupl()
                   .line(|m| m.const_str("---- ")
-                             .word()
-                             .const_str(" stdout ----\n"));
+                             .class(|_,c| !c.is_whitespace())
+                             .const_str(" stdout ----"));
 
         if m2.is_err() { return m2.derive(None) }
 
@@ -134,7 +134,7 @@ impl <'a> Value<'a> for TestFail<'a> {
                                          .const_str("\n")) {
             let mut it = 
                 Matcher::new(text)
-                        .search(|m| m.word()
+                        .search(|m| m.class(|_,c| c != ':' && !c.is_whitespace())
                                      .const_str(":")
                                      .add::<u64>()
                                      .const_str(":")
@@ -142,7 +142,7 @@ impl <'a> Value<'a> for TestFail<'a> {
                                      .map(|((file, line), col)| Some((file, line, col))));
 
             if let Some((file, line, col)) = it.next() {
-                return Matcher { val: Some(TestFail { case, file, line, col, input: out + "\n" + text }),
+                return Matcher { val: Some(TestFail { case, file, line, col, input: out + text + "\n" }),
                                                       tail: it.m.tail };
             } else {
                 if out.len() == 0 {

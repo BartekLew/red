@@ -235,7 +235,7 @@ impl <'a> Matcher<'a, ()> {
     }
 
     pub fn word(self) -> Matcher<'a, &'a str> {
-        self.class(|n, c| (c.is_alphanumeric() || c == '_' || c == '/' || c == '.')
+        self.class(|n, c| (c.is_alphanumeric() || c == '_')
                        && (n != 0 || !c.is_ascii_digit()))
     }
 

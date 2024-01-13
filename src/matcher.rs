@@ -71,6 +71,11 @@ impl <'a, T> Matcher<'a,T> {
         self.fail(1)
     }
     
+    pub fn cut_off<U>(mut self, other: Matcher<'a, U>) -> Matcher<'a, T> {
+        self.tail = &self.tail[0..(self.tail.len() - other.tail.len())];
+        self
+    }
+
     fn if_ok<R,F>(self, f: F) -> Matcher<'a, R> 
             where F: FnOnce(Matcher<'a,T>) -> Matcher<'a, R> {
         match self.val {
@@ -552,4 +557,13 @@ fn matcher_matches_from_list () {
     assert_eq!(it.next(), Some(("b", 2)));
     assert_eq!(it.next(), Some(("c", 4)));
     assert_eq!(it.next(), None);
+}
+
+#[test]
+fn matcher_cut () {
+    let m1 = Matcher::new("Foo bar baz");
+    let m2 = Matcher::new(m1.tail)
+                    .skip_after(|c| c == ' ');
+
+    assert_eq!(m1.cut_off(m2).tail(), "Foo ");
 }

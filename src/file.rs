@@ -6,6 +6,8 @@ use std::io::Read;
 use cstr::cstr;
 use std::ffi::CStr;
 
+use crate::matcher::*;
+
 extern "C" {
     fn open(fname: *const i8, flags: i32, mode: i32) -> i32;
     fn fstat(fd: i32, buff: &mut Stat) -> i32;
@@ -27,12 +29,40 @@ fn libc_err() -> &'static str {
     }
 }
 
+#[derive(Clone,Copy)]
+pub enum Mode { ReadOnly, ReadWrite }
+
+impl Mode {
+    pub fn libc_flags(&self) -> i32 {
+        match self {
+            Self::ReadOnly => O_RDONLY,
+            Self::ReadWrite => O_RDWR | O_CREAT
+        }
+    }
+
+    pub fn libc_mode(&self) -> i32 {
+        match self {
+            Self::ReadOnly => 0o400,
+            Self::ReadWrite => 0o644 
+        }
+    }
+
+    pub fn mmap_prot(&self) -> i64 {
+        match self {
+            Self::ReadOnly => PROT_READ,
+            Self::ReadWrite => PROT_READ | PROT_WRITE
+        }
+    }
+}
+
 struct File<'a> {
     name: &'a str,
     buff: &'a mut [u8],
-    fd:   i32
+    fd:   i32,
+    mode: Mode
 }
 
+const O_RDONLY: i32 = 0;
 const O_RDWR: i32 = 02;
 const O_CREAT: i32 = 0o100;
 const PROT_READ : i64 = 1;
@@ -40,35 +70,39 @@ const PROT_WRITE : i64 = 2;
 const MAP_SHARED: i64 = 1;
 
 impl<'a> File<'a> {
-    pub fn open(name: &CStr) -> Result<File,String> {
+    pub fn open(name: &CStr, mode: Mode) -> Result<File,String> {
         let rname = name.to_str().unwrap();
         unsafe {
-            let fd = open(name.as_ptr(), O_RDWR | O_CREAT, 0o744);
+            let fd = open(name.as_ptr(), mode.libc_flags(), mode.libc_mode());
             if fd < 0 {
                 return Err(format!("Can't open file '{}': {}", rname, libc_err()));
             }
 
             match Stat::from_fd(fd).map(|x| x.size()) {
                 Ok(size) => {
-                    Self::mmap(fd, size)
-                        .map(|buff| File { name: rname, buff, fd })
+                    Self::mmap(fd, size, mode)
+                        .map(|buff| File { name: rname, buff, fd, mode })
                 },
                 Err(e) => Err(e)
             }
         }
     }
 
-    fn resize(&mut self, size:usize) {
-        self.buff = Self::mmap(self.fd, size).unwrap();
-    }
-
-    fn mmap(fd: i32, size: usize) -> Result<&'static mut [u8], String> {
-        if size == 0 { return Ok(&mut [0;0]); }
-        unsafe {
-            if ftruncate(fd, size) != 0 {
+    pub fn resize(&mut self, size:usize) -> Result<(), String> {
+        unsafe{
+            if ftruncate(self.fd, size) != 0 {
                 return Err(format!("ftruncate() failed: {}", libc_err()));
             }
-            let addr = mmap(0 as *mut u8, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        }
+        
+        self.buff = Self::mmap(self.fd, size, self.mode).unwrap();
+        Ok(())
+    }
+
+    fn mmap(fd: i32, size: usize, mode: Mode) -> Result<&'static mut [u8], String> {
+        if size == 0 { return Ok(&mut [0;0]); }
+        unsafe {
+            let addr = mmap(0 as *mut u8, size, mode.mmap_prot(), MAP_SHARED, fd, 0);
             if addr != usize::MAX as *mut u8 {
                 let buff = slice::from_raw_parts_mut (addr, size);
                 Ok(buff)
@@ -83,18 +117,42 @@ impl<'a> File<'a> {
         str::from_utf8(self.buff)
     }
 
-    pub fn write_at(&mut self, offset: usize, buff: &[u8]) {
+    pub fn write_at(&mut self, offset: usize, buff: &[u8]) -> Result<(),String> {
         let endpos = offset + buff.len();
         if endpos > self.buff.len() {
             unsafe {
                 munmap(self.fd, self.buff.len());
-                self.buff = Self::mmap(self.fd, endpos).unwrap();
+                self.resize(endpos)?;
             }
         }
 
         for i in 0..buff.len() {
             self.buff[offset+i] = buff[i];
         }
+
+        Ok(())
+    }
+
+    pub fn lines(&self, start: usize, end: usize) -> Result<&str,String> {
+        let sbuff = str::from_utf8(self.buff)
+                       .map_err(|e| format!("{}", e))?;
+
+        let mut m = Matcher::new(sbuff);
+        for i in 1..start {
+            m = m.skip_after(|c| c == '\n');
+            if m.tail().len() == 0 {
+                return Err(format!("Start line {}:{} doesn't exist, there are only {} lines",
+                                   self.name, start, i))
+            }
+        }
+
+        let mut m2 = Matcher::new(m.tail);
+        for _ in 0..(end-start) {
+            m2 = m2.skip_after(|c| c == '\n');
+        }
+
+        let tail = m.cut_off(m2).as_tupple().0;
+        Ok(tail)
     }
 }
 
@@ -151,16 +209,16 @@ impl Stat {
 }
 
 #[test]
-fn test_filemod () {
+fn file_can_open_and_edit_file () {
     {
-        let mut f = File::open(cstr!("/tmp/foo.x")).unwrap();
-        f.resize(0);
+        let mut f = File::open(cstr!("/tmp/foo.x"), Mode::ReadWrite).unwrap();
+        f.resize(0).unwrap();
 
-        f.write_at(0, "foobaz\n".as_bytes());
+        f.write_at(0, "foobaz\n".as_bytes()).unwrap();
         assert_eq!(f.buff.len(), 7);
         assert_eq!(f.as_text(), Ok("foobaz\n"));
 
-        f.write_at(6, "coo\n".as_bytes());
+        f.write_at(6, "coo\n".as_bytes()).unwrap();
         assert_eq!(f.buff.len(), 10);
         assert_eq!(f.as_text(), Ok("foobazcoo\n"));
     }
@@ -171,4 +229,15 @@ fn test_filemod () {
               .unwrap();
 
     assert_eq!(&buff[..n], "foobazcoo\n".as_bytes());
+}
+
+#[test]
+fn file_can_select_lines () {
+    let f = File::open(cstr!("test_data/file.rs"), Mode::ReadOnly)
+                 .unwrap();
+
+    assert_eq!(f.lines(10,13).unwrap(),
+               concat!("    fn open(fname: *const i8, flags: i32, mode: i32) -> i32;\n",
+                       "    fn fstat(fd: i32, buff: &mut Stat) -> i32;\n",
+                       "    fn ftruncate(fd: i32, size: usize) -> i32;\n"));
 }

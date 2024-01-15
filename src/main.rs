@@ -197,24 +197,44 @@ impl<'a> fmt::Display for Info<'a> {
     }
 }
 
+fn fill_buff(buff: &mut [u8], offset: usize) -> Option<usize> {
+    match io::stdin().read(&mut buff[offset..]) {
+        Ok(n) if n == 0 => None,
+        Ok(n) => Some(n),
+        Err(e) => {
+            eprintln!("{}", e);
+            None
+        }
+    }
+}
+
+const BUFF_SIZE : usize = 1024;
 fn main() {
-    let mut buff: [u8;2028] = [0;2028];
+    let mut buff: [u8;BUFF_SIZE] = [0;BUFF_SIZE];
+    let mut offset = 0;
     loop {
-        match io::stdin().read(&mut buff) {
-            Ok(n) if n > 0 => {
-                let fixed_buff = String::from_utf8_lossy(&mut buff);
-                for msg in Matcher::new(fixed_buff.as_ref())
-                                   .split("\n\n") {
+        match fill_buff(&mut buff, offset) {
+            Some(n) => {
+                let fixed_buff = String::from_utf8_lossy(&buff[0..offset+n]);
+                let mut lines = Matcher::new(fixed_buff.as_ref())
+                                       .split("\n\n");
+                while let Some(msg) = lines.next() {
                     if let Some(msg) = Info::scan(msg) {
                         println!("{}", msg);
                     }
                 }
+
+                let taillen = lines.tail().as_bytes().len();
+                let basepos = offset+n - taillen;
+                if taillen > 0 {
+                    for i in 0..taillen {
+                        buff[i] = buff[basepos+i];
+                    }
+                }
+
+                offset = taillen;
             },
-            Ok(_) => { break; },
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                break;
-            }
+            None => break
         }
     }
 }

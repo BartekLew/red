@@ -322,6 +322,12 @@ pub struct Split<'a> {
     sep: &'a str
 }
 
+impl <'a> Split<'a> {
+    pub fn tail(self) -> &'a str {
+        self.m.tail
+    }
+}
+
 impl <'a> Iterator for Split<'a> {
     type Item = Matcher<'a, ()>;
 

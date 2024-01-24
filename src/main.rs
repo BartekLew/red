@@ -3,7 +3,7 @@ use std::io::Read;
 use std::str;
 use std::fmt;
 
-mod file;
+mod lex;
 
 mod matcher;
 use matcher::Matcher;

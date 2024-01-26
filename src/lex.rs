@@ -65,21 +65,32 @@ pub enum Seq<'a> {
 pub struct Substr<'a> {
     str: &'a [u8],
     start: usize,
-    end: usize
+    end: usize,
+    line: usize
 }
 
 impl <'a> Substr<'a> {
     pub fn start(str: &'a [u8], len: usize) -> Self {
-        Substr { str, start: 0, end: len }
+        Substr { str, start: 0, end: len, 
+                 line: str[0..len].iter()
+                                   .filter(|c| **c == b'\n')
+                                   .count() }
     }
 
     pub fn head(&self) -> &'a [u8] { &self.str[self.start..self.end] }
     pub fn tail(&self) -> &'a [u8] { &self.str[self.end..] }
 
+    pub fn token(&self, typ: &'a Seq) -> Token<'a> {
+        Token { src: self.head(), line: self.line + 1, typ }
+    }
+
     pub fn then<F>(&self, f:F) -> Option<Self>
             where F: Fn(&'a [u8]) -> Option<Substr<'a>> {
         f(self.tail())
-            .map(|ans| Substr { str: self.str, start: self.start, end: self.end + ans.end }) 
+            .map(|ans| Substr { str: self.str, 
+                                start: self.start, 
+                                end: self.end + ans.end,
+                                line: self.line + ans.line }) 
     }
 }
 
@@ -180,7 +191,8 @@ static SPACE: Seq = Seq::Many(&Seq::One(Char::Set(&[b' ', b'\t', b'\n'])));
 
 pub struct Token<'a> {
     src: &'a [u8],
-    typ: &'a Seq<'a>
+    typ: &'a Seq<'a>,
+    line: usize
 }
 
 fn ptr_eq<T>(a: &T, b: &T) -> bool {
@@ -248,7 +260,7 @@ impl <'a> Iterator for Lex<'a> {
         for opt in self.lex.opts {
             if let Some(m) = opt.scan(tail) {
                 self.cursor = m;
-                return Some(Token { src: self.cursor.head(), typ: opt });
+                return Some(self.cursor.token(opt));
             }
         }
 
@@ -264,11 +276,11 @@ fn lex_iterates_seqs () {
     let toks = [&UNIX_WORD, &SPACE];
     let lex = Lexer::new(&toks);
     let mut it = lex.scan(b"foo42 bar_11 baz");
-    assert_eq!(it.next(), Some(Token { src: b"foo42", typ: &UNIX_WORD }));
-    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
-    assert_eq!(it.next(), Some(Token { src: b"bar_11", typ: &UNIX_WORD }));
-    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
-    assert_eq!(it.next(), Some(Token { src: b"baz", typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b"foo42", line:1, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", line:1, typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"bar_11", line:1, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", line:1, typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"baz", line:1, typ: &UNIX_WORD }));
     assert_eq!(it.next(), None);
     assert_eq!(it.state(), LexState::Eof);
 }
@@ -278,13 +290,29 @@ fn lex_provides_feedback() {
     let toks = [&UNIX_WORD, &DOUBLE_QUOTE, &SPACE];
     let lex = Lexer::new(&toks);
     let mut it = lex.scan("foo \"bar\"ąęś baz".as_bytes());
-    assert_eq!(it.next(), Some(Token { src: b"foo", typ: &UNIX_WORD }));
-    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"foo", line:1, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", line:1, typ: &SPACE }));
 
     assert_eq!(it.state(), LexState::Ok);
 
-    assert_eq!(it.next(), Some(Token { src: b"\"bar\"", typ: &DOUBLE_QUOTE }));
+    assert_eq!(it.next(), Some(Token { src: b"\"bar\"", line:1, typ: &DOUBLE_QUOTE }));
     assert_eq!(it.next(), None);
 
     assert_eq!(it.state(), LexState::InvalidChar("ąęś baz".as_bytes()));
+}
+
+#[test]
+fn lex_tracks_line_numbers () {
+    let toks = [&UNIX_WORD, &DOUBLE_QUOTE, &SPACE];
+    let lex = Lexer::new(&toks);
+    let mut it = lex.scan(b"foo\nbar\nbaz\t\"coo\"");
+    assert_eq!(it.next(), Some(Token { src: b"foo", line:1, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b"\n", line:2, typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"bar", line:2, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b"\n", line:3, typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"baz", line:3, typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b"\t", line:3, typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"\"coo\"", line:3, typ: &DOUBLE_QUOTE }));
+    assert_eq!(it.next(), None);
+    assert_eq!(it.state(), LexState::Eof);
 }

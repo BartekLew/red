@@ -1,3 +1,5 @@
+use std::fmt;
+use std::str;
 
 pub enum Char<'a> {
     Set(&'a[u8]),
@@ -143,11 +145,11 @@ impl <'a> Seq<'a> {
 }
 
 pub const LATIN_WORD: Seq = Seq::Many(&Seq::One(LATIN));
-pub const UNIX_WORD: Seq = Seq::Many(&Seq::One(UNIX_NAME_CHAR));
+pub static UNIX_WORD: Seq = Seq::Many(&Seq::One(UNIX_NAME_CHAR));
 pub const ESC: Seq = Seq::Composition(&[Seq::One(Char::Set(&[b'\\'])),
                                       Seq::One(Char::Any)]);
 
-pub const DOUBLE_QUOTE: Seq = Seq::Composition(&[Seq::One(QUOTE_CHAR),
+static DOUBLE_QUOTE: Seq = Seq::Composition(&[Seq::One(QUOTE_CHAR),
                                                  Seq::Any(&Seq::Or(&[ESC, Seq::One(Char::NoneOf(&[b'"']))])),
                                                  Seq::One(QUOTE_CHAR)]);
 
@@ -172,4 +174,117 @@ fn seq_matches () {
 
     let e = b"\"foo \\\"bar\\\" \" kan";
     assert_eq!(DOUBLE_QUOTE.scan(e), Some(Substr::start(e, 14)));
+}
+
+static SPACE: Seq = Seq::Many(&Seq::One(Char::Set(&[b' ', b'\t', b'\n'])));
+
+pub struct Token<'a> {
+    src: &'a [u8],
+    typ: &'a Seq<'a>
+}
+
+fn ptr_eq<T>(a: &T, b: &T) -> bool {
+    a as *const T == b as *const T
+}
+
+impl<'a> PartialEq for Token<'a> {
+    fn eq (&self, other: &Token<'a>) -> bool {
+        self.src == other.src && ptr_eq(self.typ, other.typ)
+    }
+}
+
+impl<'a> fmt::Debug for Token<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}<{}>", self.typ as *const Seq<'a> as usize, str::from_utf8(self.src).unwrap())
+    }
+}
+
+pub struct Lexer<'a> {
+    opts: &'a [&'a Seq<'a>]
+}
+
+impl<'a> Lexer<'a> {
+    fn new(opts: &'a [&'a Seq<'a>]) -> Self { Lexer { opts } }
+
+    fn scan(&'a self, rawstr: &'a [u8]) -> Lex<'a> {
+        Lex::start(self, rawstr)
+    }
+}
+
+#[derive(PartialEq,Debug,Clone,Copy)]
+pub enum LexState<'a> {
+    Ok,
+    Eof,
+    InvalidChar(&'a [u8])
+}
+
+pub struct Lex<'a> {
+    lex: &'a Lexer<'a>,
+    cursor: Substr<'a>,
+    state: LexState<'a>
+}
+
+impl<'a> Lex <'a> {
+    fn start(lex: &'a Lexer, rawstr: &'a [u8]) -> Self {
+        Lex { lex, cursor: Substr::start(rawstr, 0), 
+                 state: LexState::Ok }
+    }
+
+    fn state(&self) -> LexState<'a> {
+        self.state
+    }
+}
+
+impl <'a> Iterator for Lex<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let tail = self.cursor.tail();
+        if tail.len() == 0 {
+            self.state = LexState::Eof;
+            return None;
+        }
+
+        for opt in self.lex.opts {
+            if let Some(m) = opt.scan(tail) {
+                self.cursor = m;
+                return Some(Token { src: self.cursor.head(), typ: opt });
+            }
+        }
+
+        self.state = LexState::InvalidChar(
+            if tail.len() > 10 { &tail[0..10] } else { tail }
+        );
+        None
+    }
+}
+
+#[test]
+fn lex_iterates_seqs () {
+    let toks = [&UNIX_WORD, &SPACE];
+    let lex = Lexer::new(&toks);
+    let mut it = lex.scan(b"foo42 bar_11 baz");
+    assert_eq!(it.next(), Some(Token { src: b"foo42", typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"bar_11", typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
+    assert_eq!(it.next(), Some(Token { src: b"baz", typ: &UNIX_WORD }));
+    assert_eq!(it.next(), None);
+    assert_eq!(it.state(), LexState::Eof);
+}
+
+#[test]
+fn lex_provides_feedback() {
+    let toks = [&UNIX_WORD, &DOUBLE_QUOTE, &SPACE];
+    let lex = Lexer::new(&toks);
+    let mut it = lex.scan("foo \"bar\"ąęś baz".as_bytes());
+    assert_eq!(it.next(), Some(Token { src: b"foo", typ: &UNIX_WORD }));
+    assert_eq!(it.next(), Some(Token { src: b" ", typ: &SPACE }));
+
+    assert_eq!(it.state(), LexState::Ok);
+
+    assert_eq!(it.next(), Some(Token { src: b"\"bar\"", typ: &DOUBLE_QUOTE }));
+    assert_eq!(it.next(), None);
+
+    assert_eq!(it.state(), LexState::InvalidChar("ąęś baz".as_bytes()));
 }

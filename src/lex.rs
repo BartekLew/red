@@ -1,34 +1,49 @@
 use std::fmt;
 use std::str;
 
-pub enum Char<'a> {
-    Set(&'a[u8]),
-    Range(u8, u8),
-    Alt(&'a[Char<'a>]),
-    NoneOf(&'a[u8]),
+pub trait OrdSet: Ord+Sized+Copy {
+    fn next(&self) -> Self;
+}
+
+impl OrdSet for u8 {
+    fn next(&self) -> u8 { self+1 }
+} 
+
+pub enum Class<'a, T:OrdSet> {
+    Set(&'a[T]),
+    Range(T, T),
+    Alt(&'a[Class<'a, T>]),
+    NoneOf(&'a [T]),
     Any
 }
 
-pub const QUOTE_CHAR: Char = Char::Set(&[b'"']);
-pub const LATIN_SMALL: Char = Char::Range(b'a', b'z');
-pub const LATIN_CAPITAL: Char = Char::Range(b'A', b'Z');
-pub const LATIN: Char = Char::Alt(&[LATIN_SMALL, LATIN_CAPITAL]);
-pub const DIGIT: Char = Char::Range(b'0', b'9');
-pub const UNIX_NAME_CHAR: Char = Char::Alt(&[LATIN_SMALL, LATIN_CAPITAL, DIGIT, Char::Set(&[b'_'])]);
+pub const QUOTE_CHAR: Class<u8> = Class::Set(&[b'"']);
+pub const LATIN_SMALL: Class<u8> = Class::Range(b'a', b'z');
+pub const LATIN_CAPITAL: Class<u8> = Class::Range(b'A', b'Z');
+pub const LATIN: Class<u8> = Class::Alt(&[LATIN_SMALL, LATIN_CAPITAL]);
+pub const DIGIT: Class<u8> = Class::Range(b'0', b'9');
+pub const UNIX_NAME_CHAR: Class<u8> = Class::Alt(&[LATIN_SMALL, LATIN_CAPITAL, DIGIT, Class::Set(&[b'_'])]);
 
-impl<'a> Char<'a> {
-    pub fn test(&self, byte: u8) -> bool {
+impl<'a, T:OrdSet> Class<'a, T> {
+    pub fn test(&self, val: T) -> bool {
         match self {
-            Self::Set(opts) => opts.iter().any(|c| *c == byte),
-            Self::Range(a, b) => (*a..*b+1).any(|c| c == byte),
-            Self::Alt(opts) => opts.iter().any(|cd| cd.test(byte)),
-            Self::NoneOf(opts) => !opts.iter().any(|c| *c == byte),
+            Self::Set(opts) => opts.iter().any(|c| *c == val),
+            Self::Range(start, limit) => {
+                let mut i = *start;
+                while i <= *limit {
+                    if i == val { return true; }
+                    i = i.next();
+                } 
+                return false;
+            },
+            Self::Alt(opts) => opts.iter().any(|cd| cd.test(val)),
+            Self::NoneOf(opts) => !opts.iter().any(|c| *c == val),
             Self::Any => true
         }
     }
 
-    pub fn test_opt(&self, byte: u8) -> Option<()> {
-        if self.test(byte) { Some(()) }
+    pub fn test_opt(&self, val: T) -> Option<()> {
+        if self.test(val) { Some(()) }
         else { None }
     }
 }
@@ -47,59 +62,69 @@ fn chardef_matches_one_byte() {
     assert_eq!(LATIN.test(b'C'), true);
     assert_eq!(LATIN.test(b'a'), true);
     assert_eq!(UNIX_NAME_CHAR.test(b'_'), true);
-    assert_eq!(Char::Any.test(b'_'), true);
-    assert_eq!(Char::Any.test(b'Q'), true);
-    assert_eq!(Char::Any.test(b'v'), true);
-    assert_eq!(Char::Any.test(11), true);
+    assert_eq!(Class::Any.test(b'_'), true);
+    assert_eq!(Class::Any.test(b'Q'), true);
+    assert_eq!(Class::Any.test(b'v'), true);
+    assert_eq!(Class::Any.test(11), true);
 }
 
-pub enum Seq<'a> {
-    One(Char<'a>),
-    Many(&'a Seq<'a>),
-    Any(&'a Seq<'a>),
-    Or(&'a [Seq<'a>]),
-    Composition(&'a[Seq<'a>])
+pub enum Seq<'a,T:OrdSet> {
+    One(Class<'a, T>),
+    Many(&'a Seq<'a,T>),
+    Any(&'a Seq<'a,T>),
+    Or(&'a [Seq<'a,T>]),
+    Composition(&'a[Seq<'a,T>])
+}
+
+pub trait Lined : PartialEq {
+    fn lines_count(&self) -> usize;
+}
+
+impl Lined for u8 {
+    fn lines_count(&self) -> usize {
+        if *self == b'\n' { 1 } else { 0 }
+    }
 }
 
 #[derive(PartialEq, Debug)]
-pub struct Substr<'a> {
-    str: &'a [u8],
+pub struct Subseq<'a, T: Lined> {
+    str: &'a [T],
     start: usize,
     end: usize,
     line: usize
 }
 
-impl <'a> Substr<'a> {
-    pub fn start(str: &'a [u8], len: usize) -> Self {
-        Substr { str, start: 0, end: len, 
-                 line: str[0..len].iter()
-                                   .filter(|c| **c == b'\n')
-                                   .count() }
+impl <'a, T:Lined> Subseq<'a, T> {
+    pub fn start(str: &'a [T], len: usize) -> Self {
+        Subseq { str, start: 0, end: len, 
+                 line: str[0..len].iter().fold(0, |a, v| a + v.lines_count()) }
     }
 
-    pub fn head(&self) -> &'a [u8] { &self.str[self.start..self.end] }
-    pub fn tail(&self) -> &'a [u8] { &self.str[self.end..] }
-
-    pub fn token(&self, typ: &'a Seq) -> Token<'a> {
-        Token { src: self.head(), line: self.line + 1, typ }
-    }
+    pub fn head(&self) -> &'a [T] { &self.str[self.start..self.end] }
+    pub fn tail(&self) -> &'a [T] { &self.str[self.end..] }
 
     pub fn then<F>(&self, f:F) -> Option<Self>
-            where F: Fn(&'a [u8]) -> Option<Substr<'a>> {
+            where F: Fn(&'a [T]) -> Option<Subseq<'a, T>> {
         f(self.tail())
-            .map(|ans| Substr { str: self.str, 
+            .map(|ans| Subseq { str: self.str, 
                                 start: self.start, 
                                 end: self.end + ans.end,
                                 line: self.line + ans.line }) 
     }
 }
 
-impl <'a> Seq<'a> {
-    fn scan(&self, rawstr: &'a [u8]) -> Option<Substr<'a>> {
+impl <'a> Subseq <'a, u8> {
+    pub fn token(&self, typ: &'a Seq<u8>) -> Token<'a> {
+        Token { src: self.head(), line: self.line + 1, typ }
+    }
+}
+
+impl <'a, T:OrdSet+Lined> Seq<'a, T> {
+    fn scan(&self, rawstr: &'a [T]) -> Option<Subseq<'a,T>> {
         match self {
             Self::One(cd) => rawstr.get(0)
                                    .and_then(|c| cd.test_opt(*c)
-                                                   .map(|_| Substr::start(rawstr, 1))),
+                                                   .map(|_| Subseq::start(rawstr, 1))),
 
             Self::Many(seq) => {
                 let mut acc = seq.scan(rawstr);
@@ -129,7 +154,7 @@ impl <'a> Seq<'a> {
                             }
                         }
                     },
-                    None => {return Some(Substr::start(rawstr, 0))}
+                    None => {return Some(Subseq::start(rawstr, 0))}
                 }
 
                 acc
@@ -148,50 +173,51 @@ impl <'a> Seq<'a> {
 
             Self::Composition(parts) => {
                 parts.iter()
-                     .fold(Some(Substr::start(rawstr, 0)),
-                           |acc: Option<Substr>, part| acc.and_then(|x| x.then(|x| part.scan(x))))
+                     .fold(Some(Subseq::start(rawstr, 0)),
+                           |acc: Option<Subseq<T>>, part| acc.and_then(|x| x.then(|x| part.scan(x))))
             }
         }
     }
 }
 
-pub const LATIN_WORD: Seq = Seq::Many(&Seq::One(LATIN));
-pub static UNIX_WORD: Seq = Seq::Many(&Seq::One(UNIX_NAME_CHAR));
-pub const ESC: Seq = Seq::Composition(&[Seq::One(Char::Set(&[b'\\'])),
-                                      Seq::One(Char::Any)]);
+pub const LATIN_WORD: Seq<u8> = Seq::Many(&Seq::One(LATIN));
+pub static UNIX_WORD: Seq<u8> = Seq::Many(&Seq::One(UNIX_NAME_CHAR));
+pub const ESC: Seq<u8> = Seq::Composition(&[Seq::One(Class::Set(&[b'\\'])),
+                                            Seq::One(Class::<u8>::Any)]);
 
-static DOUBLE_QUOTE: Seq = Seq::Composition(&[Seq::One(QUOTE_CHAR),
-                                                 Seq::Any(&Seq::Or(&[ESC, Seq::One(Char::NoneOf(&[b'"']))])),
-                                                 Seq::One(QUOTE_CHAR)]);
+static DOUBLE_QUOTE: Seq<u8> = Seq::Composition(&[Seq::One(QUOTE_CHAR),
+                                                  Seq::Any(&Seq::Or(&[ESC, 
+                                                                      Seq::One(Class::NoneOf(&[b'"']))])),
+                                                  Seq::One(QUOTE_CHAR)]);
 
 #[test]
 fn seq_matches () {
     let a = b"foobar";
-    assert_eq!(Seq::One(LATIN).scan(a), Some(Substr::start(a, 1)));
+    assert_eq!(Seq::One(LATIN).scan(a), Some(Subseq::start(a, 1)));
     assert_eq!(Seq::One(LATIN).scan(b"_foobar"), None);
 
-    assert_eq!(LATIN_WORD.scan(a), Some(Substr::start(a, 6)));
+    assert_eq!(LATIN_WORD.scan(a), Some(Subseq::start(a, 6)));
 
     let b = b"foo_bar99";
-    assert_eq!(UNIX_WORD.scan(b), Some(Substr::start(b, 9)));
+    assert_eq!(UNIX_WORD.scan(b), Some(Subseq::start(b, 9)));
 
     let c = "\"你好\" chacha".as_bytes();
-    assert_eq!(DOUBLE_QUOTE.scan(c), Some(Substr::start(c, 8)));
+    assert_eq!(DOUBLE_QUOTE.scan(c), Some(Subseq::start(c, 8)));
     
     let d = b"\"\" chacha";
-    assert_eq!(DOUBLE_QUOTE.scan(d), Some(Substr::start(d, 2)));
+    assert_eq!(DOUBLE_QUOTE.scan(d), Some(Subseq::start(d, 2)));
 
     assert_eq!(Seq::One(LATIN).scan(c), None);
 
     let e = b"\"foo \\\"bar\\\" \" kan";
-    assert_eq!(DOUBLE_QUOTE.scan(e), Some(Substr::start(e, 14)));
+    assert_eq!(DOUBLE_QUOTE.scan(e), Some(Subseq::start(e, 14)));
 }
 
-static SPACE: Seq = Seq::Many(&Seq::One(Char::Set(&[b' ', b'\t', b'\n'])));
+static SPACE: Seq<u8> = Seq::Many(&Seq::One(Class::Set(&[b' ', b'\t', b'\n'])));
 
 pub struct Token<'a> {
     src: &'a [u8],
-    typ: &'a Seq<'a>,
+    typ: &'a Seq<'a,u8>,
     line: usize
 }
 
@@ -207,16 +233,16 @@ impl<'a> PartialEq for Token<'a> {
 
 impl<'a> fmt::Debug for Token<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}<{}>", self.typ as *const Seq<'a> as usize, str::from_utf8(self.src).unwrap())
+        write!(f, "{}<{}>", self.typ as *const Seq<'a, u8> as usize, str::from_utf8(self.src).unwrap())
     }
 }
 
 pub struct Lexer<'a> {
-    opts: &'a [&'a Seq<'a>]
+    opts: &'a [&'a Seq<'a,u8>]
 }
 
 impl<'a> Lexer<'a> {
-    fn new(opts: &'a [&'a Seq<'a>]) -> Self { Lexer { opts } }
+    fn new(opts: &'a [&'a Seq<'a, u8>]) -> Self { Lexer { opts } }
 
     fn scan(&'a self, rawstr: &'a [u8]) -> Lex<'a> {
         Lex::start(self, rawstr)
@@ -232,13 +258,13 @@ pub enum LexState<'a> {
 
 pub struct Lex<'a> {
     lex: &'a Lexer<'a>,
-    cursor: Substr<'a>,
+    cursor: Subseq<'a, u8>,
     state: LexState<'a>
 }
 
 impl<'a> Lex <'a> {
     fn start(lex: &'a Lexer, rawstr: &'a [u8]) -> Self {
-        Lex { lex, cursor: Substr::start(rawstr, 0), 
+        Lex { lex, cursor: Subseq::start(rawstr, 0), 
                  state: LexState::Ok }
     }
 

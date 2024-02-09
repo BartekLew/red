@@ -3,11 +3,8 @@ use std::io::Read;
 use std::str;
 use std::fmt;
 
-mod lex;
-
-mod matcher;
-use matcher::Matcher;
-use matcher::Value;
+use red::matcher::Matcher;
+use red::matcher::Value;
 
 struct Warning<'a> {
     line: u64,
@@ -41,26 +38,6 @@ impl <'a> Value<'a> for Warning<'a> {
             (tail, None) => Matcher {tail, val: None}
          } 
 
-    }
-}
-
-impl<'a> Warning <'a> {
-    fn drop_if<F>(self, f:F) -> Option<Warning<'a>>
-            where F:Fn(Matcher<'a, ()>) -> Matcher<'a, ()> {
-        if Matcher::new(self.text).search(f).next().is_none() {
-            Some(self)
-        } else {
-            None
-        }
-    }
-
-    fn select(self) -> Option<Warning<'a>> {
-        self.drop_if(|m|
-                m.or(|m| m.one_of(&["never used", "never read", "never constructed"]),
-                     |m| m.const_str("generated ")
-                          .value::<u64>()
-                          .drop_val()
-                          .const_str(" warnings")))
     }
 }
 
@@ -176,7 +153,7 @@ enum Info<'a> {
 impl<'a> Info<'a> {
     fn scan(msg: Matcher<'a, ()>) -> Option<Info> {
         if let Some(txt) = msg.dupl().search(|m| m.value::<Warning<'a>>()).next() {
-            txt.select().map(|w| Info::Code(w))
+            Some(Info::Code(txt))
         } else if let Some(fail) = msg.dupl().search(|m| m.value::<TestFail>()).next() {
             Some(Info::Fail(fail))
         } else if let Some(testrep) = msg.dupl().search(|m| m.value::<TestStat>()).next() {

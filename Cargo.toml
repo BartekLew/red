@@ -8,6 +8,10 @@ edition = "2021"
 [dependencies]
 cstr = "0.2.11"
 
+[lib]
+name = "red"
+path = "src/red.rs"
+
 [[bin]]
 name = "cdefs"
 path = "src/cdefs.rs"

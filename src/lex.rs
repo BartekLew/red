@@ -185,10 +185,11 @@ pub static UNIX_WORD: Seq<u8> = Seq::Many(&Seq::One(UNIX_NAME_CHAR));
 pub const ESC: Seq<u8> = Seq::Composition(&[Seq::One(Class::Set(&[b'\\'])),
                                             Seq::One(Class::<u8>::Any)]);
 
-static DOUBLE_QUOTE: Seq<u8> = Seq::Composition(&[Seq::One(QUOTE_CHAR),
-                                                  Seq::Any(&Seq::Or(&[ESC, 
-                                                                      Seq::One(Class::NoneOf(&[b'"']))])),
-                                                  Seq::One(QUOTE_CHAR)]);
+pub static DOUBLE_QUOTE: Seq<u8> =
+    Seq::Composition(&[Seq::One(QUOTE_CHAR),
+                       Seq::Any(&Seq::Or(&[ESC, 
+                                           Seq::One(Class::NoneOf(&[b'"']))])),
+                       Seq::One(QUOTE_CHAR)]);
 
 #[test]
 fn seq_matches () {
@@ -213,12 +214,16 @@ fn seq_matches () {
     assert_eq!(DOUBLE_QUOTE.scan(e), Some(Subseq::start(e, 14)));
 }
 
-static SPACE: Seq<u8> = Seq::Many(&Seq::One(Class::Set(&[b' ', b'\t', b'\n'])));
+pub static SPACE: Seq<u8> = Seq::Many(&Seq::One(Class::Set(&[b' ', b'\t', b'\n'])));
 
 pub struct Token<'a> {
     src: &'a [u8],
     typ: &'a Seq<'a,u8>,
     line: usize
+}
+
+impl<'a> Token<'a> {
+    pub fn line(&self) -> usize { self.line }
 }
 
 fn ptr_eq<T>(a: &T, b: &T) -> bool {
@@ -242,9 +247,9 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    fn new(opts: &'a [&'a Seq<'a, u8>]) -> Self { Lexer { opts } }
+    pub fn new(opts: &'a [&'a Seq<'a, u8>]) -> Self { Lexer { opts } }
 
-    fn scan(&'a self, rawstr: &'a [u8]) -> Lex<'a> {
+    pub fn scan(&'a self, rawstr: &'a [u8]) -> Lex<'a> {
         Lex::start(self, rawstr)
     }
 }
@@ -263,12 +268,12 @@ pub struct Lex<'a> {
 }
 
 impl<'a> Lex <'a> {
-    fn start(lex: &'a Lexer, rawstr: &'a [u8]) -> Self {
+    pub fn start(lex: &'a Lexer, rawstr: &'a [u8]) -> Self {
         Lex { lex, cursor: Subseq::start(rawstr, 0), 
                  state: LexState::Ok }
     }
 
-    fn state(&self) -> LexState<'a> {
+    pub fn state(&self) -> LexState<'a> {
         self.state
     }
 }

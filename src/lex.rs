@@ -72,7 +72,8 @@ pub enum Seq<'a,T:OrdSet> {
     One(Class<'a, T>),
     Many(&'a Seq<'a,T>),
     Any(&'a Seq<'a,T>),
-    Or(&'a [Seq<'a,T>]),
+    Const(&'a [T]),
+    Or(&'a [&'a Seq<'a,T>]),
     Composition(&'a[Seq<'a,T>])
 }
 
@@ -160,6 +161,14 @@ impl <'a, T:OrdSet+Lined> Seq<'a, T> {
                 acc
             },
 
+            Self::Const(seq) => {
+                if &rawstr[0..seq.len()] == *seq {
+                    Some(Subseq::start(rawstr, seq.len()))
+                } else {
+                    None
+                }
+            }, 
+            
             Self::Or(opts) => {
                 for opt in opts.iter() {
                     let ans = opt.scan(rawstr);
@@ -187,9 +196,29 @@ pub const ESC: Seq<u8> = Seq::Composition(&[Seq::One(Class::Set(&[b'\\'])),
 
 pub static DOUBLE_QUOTE: Seq<u8> =
     Seq::Composition(&[Seq::One(QUOTE_CHAR),
-                       Seq::Any(&Seq::Or(&[ESC, 
-                                           Seq::One(Class::NoneOf(&[b'"']))])),
+                       Seq::Any(&Seq::Or(&[&ESC, 
+                                           &Seq::One(Class::NoneOf(&[b'"']))])),
                        Seq::One(QUOTE_CHAR)]);
+
+pub static BRACK: Seq<u8> =
+    Seq::Composition(&[Seq::One(Class::Set(&[b'('])),
+                       Seq::Any(&Seq::Or(&[&BRACK, &Seq::One(Class::NoneOf(&[b'(', b')']))])),
+                       Seq::One(Class::Set(&[b')']))]);
+
+pub static CURLY: Seq<u8> =
+    Seq::Composition(&[Seq::One(Class::Set(&[b'{'])),
+                       Seq::Any(&Seq::Or(&[&CURLY, &Seq::One(Class::NoneOf(&[b'{', b'}']))])),
+                       Seq::One(Class::Set(&[b'}']))]);
+
+pub static SQBRACK: Seq<u8> =
+    Seq::Composition(&[Seq::One(Class::Set(&[b'['])),
+                       Seq::Any(&Seq::Or(&[&SQBRACK, &Seq::One(Class::NoneOf(&[b'[', b']']))])),
+                       Seq::One(Class::Set(&[b']']))]);
+
+pub static PTBRACK: Seq<u8> =
+    Seq::Composition(&[Seq::One(Class::Set(&[b'<'])),
+                       Seq::Any(&Seq::Or(&[&PTBRACK, &Seq::One(Class::NoneOf(&[b'<', b'>']))])),
+                       Seq::One(Class::Set(&[b'>']))]);
 
 #[test]
 fn seq_matches () {
@@ -214,8 +243,24 @@ fn seq_matches () {
     assert_eq!(DOUBLE_QUOTE.scan(e), Some(Subseq::start(e, 14)));
 }
 
+#[test]
+fn seq_matches_brackets() {
+    let a = b"(foo, bar, (bazqff), uqq, (bi, ca, yo))";
+    assert_eq!(BRACK.scan(a), Some(Subseq::start(a, 39)));
+
+    let b = b"<Akkkh<> 11>";
+    assert_eq!(PTBRACK.scan(b), Some(Subseq::start(b, 12)));
+
+    let c = b"[132, a[44]]";
+    assert_eq!(SQBRACK.scan(c), Some(Subseq::start(c, 12)));
+
+    let d = b"{12, sqq({42, 2})}";
+    assert_eq!(CURLY.scan(d), Some(Subseq::start(d, 18)));
+}
+
 pub static SPACE: Seq<u8> = Seq::Many(&Seq::One(Class::Set(&[b' ', b'\t', b'\n'])));
 
+#[derive(Clone, Copy)]
 pub struct Token<'a> {
     src: &'a [u8],
     typ: &'a Seq<'a,u8>,
@@ -224,6 +269,14 @@ pub struct Token<'a> {
 
 impl<'a> Token<'a> {
     pub fn line(&self) -> usize { self.line }
+
+    pub fn test(&self, t: &'a Seq<'a, u8>, val: &'a[u8]) -> bool {
+        ptr_eq(t, self.typ) && self.src == val
+    }
+
+    pub fn of_type(&self, t: &'a Seq<'a, u8>) -> bool {
+        ptr_eq(t, self.typ)
+    }
 }
 
 fn ptr_eq<T>(a: &T, b: &T) -> bool {
@@ -247,7 +300,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(opts: &'a [&'a Seq<'a, u8>]) -> Self { Lexer { opts } }
+    pub const fn new(opts: &'a [&'a Seq<'a, u8>]) -> Self { Lexer { opts } }
 
     pub fn scan(&'a self, rawstr: &'a [u8]) -> Lex<'a> {
         Lex::start(self, rawstr)
@@ -282,6 +335,10 @@ impl <'a> Iterator for Lex<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.state != LexState::Ok {
+            return None
+        }
+
         let tail = self.cursor.tail();
         if tail.len() == 0 {
             self.state = LexState::Eof;
@@ -346,4 +403,69 @@ fn lex_tracks_line_numbers () {
     assert_eq!(it.next(), Some(Token { src: b"\"coo\"", line:3, typ: &DOUBLE_QUOTE }));
     assert_eq!(it.next(), None);
     assert_eq!(it.state(), LexState::Eof);
+}
+
+pub struct RustBlock<'a> {
+    pub name: &'a str,
+    pub body: &'a[u8]
+}
+
+static RUST_LEX: Lexer = Lexer::new(&[&UNIX_WORD, &SPACE, &CURLY, &PTBRACK]);
+
+#[derive(Debug)]
+pub struct SyntaxError<'a> {
+    pub last: Option<Token<'a>>
+}
+
+impl <'a> SyntaxError<'a> {
+    pub fn from_it_next<I>(last: Option<Token<'a>>, it: &mut I)
+            -> Result<Token<'a>, SyntaxError<'a>> 
+            where I: Iterator<Item=Token<'a>> {
+
+        match it.next() {
+            Some(x) => Ok(x),
+            None => Err(SyntaxError { last })
+        }
+    }
+}
+
+impl<'a> RustBlock<'a> {
+    pub fn scan(body: &'a[u8]) -> Result<Self,SyntaxError<'a>> {
+        let mut it = RUST_LEX.scan(body)
+                             .filter(|x| !x.of_type(&SPACE));
+        let initial = SyntaxError::from_it_next(None, &mut it)?;
+
+        let strct = match initial.test(&UNIX_WORD, b"pub") {
+            true => SyntaxError::from_it_next(None, &mut it)?,
+            false => initial
+        };
+
+        if strct.test(&UNIX_WORD, b"struct") {
+            let name = SyntaxError::from_it_next(Some(initial), &mut it)?;
+            let mut x;
+            loop { 
+                x = SyntaxError::from_it_next(Some(name.clone()), &mut it)?;
+                if !x.of_type(&SPACE) {
+                    break;
+                }
+            }
+
+            if x.of_type(&CURLY) {
+                return Ok(RustBlock { name: str::from_utf8(name.src).unwrap(), 
+                                      body: &x.src[1..x.src.len()-1] });
+            } else {
+                return Err(SyntaxError { last: Some(name) })
+            }
+        }
+
+        return Err(SyntaxError { last: Some(initial) })
+    }
+}
+
+#[test]
+fn seq_matches_rust_blocks() {
+    let src = b"pub struct aa { qq: String }";
+    let rb = RustBlock::scan(src).unwrap();
+    assert_eq!(rb.name, "aa");
+    assert_eq!(rb.body, b" qq: String ");
 }

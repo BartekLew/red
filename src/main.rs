@@ -104,34 +104,21 @@ impl <'a> Value<'a> for TestFail<'a> {
 
         let (tail, val) =  m2.as_tupple();
         let case = val.unwrap();
-        let mut out = String::with_capacity(2048);
 
-        for text in Matcher::new(tail)
-                            .search(|m| m.class(|_,c| c != '\n')
-                                         .const_str("\n")) {
-            let mut it = 
-                Matcher::new(text)
-                        .search(|m| m.class(|_,c| c != ':' && !c.is_whitespace())
-                                     .const_str(":")
-                                     .add::<u64>()
-                                     .const_str(":")
-                                     .add::<u64>()
-                                     .map(|((file, line), col)| Some((file, line, col))));
+        let mut it = Matcher::new(tail)
+                            .search(|m| m.class(|_,c| c != ':' && !c.is_whitespace())
+                                         .const_str(":")
+                                         .add::<u64>()
+                                         .const_str(":")
+                                         .add::<u64>()
+                                         .map(|((file, line), col)| Some((file, line, col))));
 
-            if let Some((file, line, col)) = it.next() {
-                return Matcher { val: Some(TestFail { case, file, line, col, input: out + text + "\n" }),
-                                                      tail: it.m.tail };
-            } else {
-                if out.len() == 0 {
-                    out = out + text;
-                }
-                else {
-                    out = out + "\n" + text;
-                }
-            }
+        if let Some((file, line, col)) = it.next() {
+            return Matcher { val: Some(TestFail { case, file, line, col, 
+                                                  input: String::from(tail)}),
+                             tail: &tail[0..0]}
         }
 
-        let (tail, _val) = m.as_tupple();
         Matcher { tail: &tail[1..], val: None }
     }
 }
